@@ -4,9 +4,13 @@ import {
   circlesOverlap,
   clamp,
   formatTime,
+  getMatchResult,
+  getOrderedHandEntries,
   getPaceConfig,
+  getRequiredHandCount,
   getStreakMultiplier,
   randomObjectType,
+  REGISTRATION_COUNTDOWN_MS,
 } from "../src/gameLogic.js";
 import {
   adaptiveSmoothing,
@@ -58,6 +62,30 @@ describe("game helpers", () => {
   it("never lets a hazard reduce the score below zero", () => {
     expect(applyObjectScore({ score: 10, streak: 4 }, { points: -25, hazard: true }))
       .toEqual({ score: 0, streak: 0, multiplier: 1, delta: -10 });
+  });
+
+  it("requires two visible hands for local PvP and one for solo play", () => {
+    expect(getRequiredHandCount("solo")).toBe(1);
+    expect(getRequiredHandCount("pvp")).toBe(2);
+    expect(REGISTRATION_COUNTDOWN_MS).toBe(3000);
+  });
+
+  it("orders registered hands from the left side of the mirrored screen", () => {
+    const hands = [
+      { x: 0.78, y: 0.5 },
+      null,
+      { x: 0.21, y: 0.45 },
+    ];
+    expect(getOrderedHandEntries(hands)).toEqual([
+      { hand: hands[2], index: 2 },
+      { hand: hands[0], index: 0 },
+    ]);
+  });
+
+  it("announces a PvP winner or a friendly draw", () => {
+    expect(getMatchResult(80, 55, "pvp")).toMatchObject({ winner: 1, title: "Player 1 wins!" });
+    expect(getMatchResult(40, 40, "pvp")).toMatchObject({ winner: "tie", title: "A friendly draw!" });
+    expect(getMatchResult(40, 0, "solo")).toMatchObject({ winner: "solo", title: "Lovely movement!" });
   });
 });
 

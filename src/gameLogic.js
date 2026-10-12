@@ -17,6 +17,41 @@ export const HAZARD_TYPES = Object.freeze([
 ]);
 
 export const MAX_MULTIPLIER = 4;
+export const REGISTRATION_COUNTDOWN_MS = 3000;
+
+export function getRequiredHandCount(playMode) {
+  return playMode === "pvp" ? 2 : 1;
+}
+
+export function getOrderedHandEntries(hands = []) {
+  return hands
+    .map((hand, index) => ({ hand, index }))
+    .filter(({ hand }) => Boolean(hand))
+    .sort((first, second) => first.hand.x - second.hand.x);
+}
+
+export function getMatchResult(playerOneScore, playerTwoScore, playMode = "solo") {
+  if (playMode !== "pvp") {
+    return {
+      winner: "solo",
+      title: "Lovely movement!",
+      message: "A joyful round of reaching, moving and catching.",
+    };
+  }
+  if (playerOneScore === playerTwoScore) {
+    return {
+      winner: "tie",
+      title: "A friendly draw!",
+      message: `Both players finished with ${playerOneScore} points.`,
+    };
+  }
+  const winner = playerOneScore > playerTwoScore ? 1 : 2;
+  return {
+    winner,
+    title: `Player ${winner} wins!`,
+    message: `Player ${winner} caught the most points this round.`,
+  };
+}
 
 export function getPaceConfig(pace) {
   return PACE_CONFIG[pace] ?? PACE_CONFIG.gentle;

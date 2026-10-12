@@ -1,24 +1,53 @@
 import "./styles.css";
-import { applyObjectScore, circlesOverlap, clamp, formatTime, getPaceConfig, randomObjectType } from "./gameLogic.js";
+import {
+  applyObjectScore,
+  circlesOverlap,
+  clamp,
+  formatTime,
+  getMatchResult,
+  getOrderedHandEntries,
+  getPaceConfig,
+  getRequiredHandCount,
+  randomObjectType,
+  REGISTRATION_COUNTDOWN_MS,
+} from "./gameLogic.js";
 import { HandTracker } from "./handTracker.js";
 
 const $ = (selector) => document.querySelector(selector);
+const panels = [$("#landingPanel"), $("#setupPanel"), $("#registrationPanel"), $("#playPanel"), $("#resultsPanel")];
 const elements = {
+  landing: $("#landingPanel"),
   setup: $("#setupPanel"),
+  registration: $("#registrationPanel"),
   play: $("#playPanel"),
   results: $("#resultsPanel"),
+  enterGame: $("#enterGame"),
+  backToWelcome: $("#backToWelcome"),
   cameraStart: $("#cameraStart"),
   keyboardStart: $("#keyboardStart"),
   cameraMessage: $("#cameraMessage"),
+  cancelRegistration: $("#cancelRegistration"),
+  registrationVideo: $("#registrationVideo"),
+  registrationPlural: $("#registrationPlural"),
+  registrationInstruction: $("#registrationInstruction"),
+  registrationStatus: $("#registrationStatus"),
+  registrationStatusText: $("#registrationStatus strong"),
+  registrationTip: $(".registration-tip"),
+  registrationCursors: [...document.querySelectorAll("#registrationCursors .player-cursor")],
+  playerTwoKey: $("#playerTwoKey"),
+  countdownBadge: $("#countdownBadge"),
+  countdownValue: $("#countdownValue"),
   board: $("#gameBoard"),
   targets: $("#targets"),
-  cursors: [...document.querySelectorAll(".player-cursor")],
+  cursors: [...document.querySelectorAll("#playerCursors .player-cursor")],
   trackingStatus: $("#trackingStatus"),
   trackingStatusText: $("#trackingStatus strong"),
   video: $("#cameraVideo"),
-  score: $("#scoreValue"),
-  streak: $("#streakValue"),
-  multiplier: $("#multiplierValue"),
+  playerOneScore: $("#playerOneScore"),
+  playerOneStreak: $("#playerOneStreak"),
+  playerTwoScoreCard: $("#playerTwoScoreCard"),
+  playerTwoScore: $("#playerTwoScore"),
+  playerTwoStreak: $("#playerTwoStreak"),
   caught: $("#caughtValue"),
   missed: $("#missedValue"),
   missLimit: $("#missLimit"),
@@ -27,22 +56,29 @@ const elements = {
   end: $("#endButton"),
   pauseOverlay: $("#pauseOverlay"),
   inputHint: $("#inputHint"),
-  finalScore: $("#finalScore"),
+  resultsTitle: $("#resultsTitle"),
+  finalPlayerOneLabel: $("#finalPlayerOneLabel"),
+  finalPlayerOneScore: $("#finalPlayerOneScore"),
+  finalPlayerTwoCard: $("#finalPlayerTwoCard"),
+  finalPlayerTwoScore: $("#finalPlayerTwoScore"),
   finalCaught: $("#finalCaught"),
-  finalStreak: $("#finalStreak"),
   resultMessage: $("#resultMessage"),
   playAgain: $("#playAgain"),
+  backHome: $("#backHome"),
   statusLive: $("#statusLive"),
 };
 
+function emptyPlayerStats() {
+  return { score: 0, streak: 0, multiplier: 1, bestStreak: 0, caught: 0 };
+}
+
 const state = {
+  phase: "landing",
   running: false,
   paused: false,
-  mode: "keyboard",
-  score: 0,
-  streak: 0,
-  multiplier: 1,
-  bestStreak: 0,
+  inputMode: "keyboard",
+  playMode: "solo",
+  playerStats: [emptyPlayerStats(), emptyPlayerStats()],
   caught: 0,
   missed: 0,
   pace: "gentle",
@@ -58,36 +94,81 @@ const state = {
   keys: new Set(),
   stream: null,
   animationId: null,
+  countdownAnimationId: null,
+  countdownEndsAt: 0,
+  playerSlots: [],
 };
 
-const tracker = new HandTracker(elements.video, (hands) => {
-  if (state.running && !state.paused && state.mode === "camera") {
-    state.players = hands.map((hand) => hand ? { ...hand, radius: 44 } : null);
+function showPanel(panel, phase) {
+  panels.forEach((candidate) => { candidate.hidden = candidate !== panel; });
+  state.phase = phase;
+  panel.scrollIntoView({ block: "start" });
+}
+
+function selectedValue(name) {
+  return document.querySelector(`input[name="${name}"]:checked`).value;
+}
+
+function configureFromSetup() {
+  state.playMode = selectedValue("playMode");
+  state.pace = selectedValue("pace");
+  state.durationSeconds = Number(selectedValue("duration"));
+  state.remainingSeconds = state.durationSeconds;
+}
+
+function visibleHandEntries(hands) {
+  return getOrderedHandEntries(hands).filter(({ hand }) => hand.interactive !== false);
+}
+
+function registrationPlayers(hands) {
+  const entries = visibleHandEntries(hands);
+  if (state.playMode === "pvp") {
+    return entries.slice(0, 2).map(({ hand }, ownerIndex) => ({ ...hand, radius: 44, ownerIndex }));
+  }
+  return entries.slice(0, 2).map(({ hand }) => ({ ...hand, radius: 44, ownerIndex: 0 }));
+}
+
+function gameplayPlayers(hands) {
+  if (state.playMode === "pvp") {
+    return state.playerSlots.map((slotIndex, ownerIndex) => {
+      const hand = hands[slotIndex];
+      return hand ? { ...hand, radius: 44, ownerIndex } : null;
+    });
+  }
+  return hands.filter(Boolean).slice(0, 2).map((hand) => ({ ...hand, radius: 44, ownerIndex: 0 }));
+}
+
+const tracker = new HandTracker(elements.registrationVideo, (hands) => {
+  if (state.inputMode !== "camera") return;
+  if (state.phase === "registering" || state.phase === "countdown") {
+    state.players = registrationPlayers(hands);
+    renderCursors(elements.registrationCursors);
+    handleRegistration(hands);
+  } else if (state.phase === "playing" && state.running && !state.paused) {
+    state.players = gameplayPlayers(hands);
   }
 }, (status) => {
-  if (!state.running || state.mode !== "camera") return;
-  if (status.type === "tracking") updateTrackingStatus(status.count);
+  if (state.inputMode !== "camera") return;
+  if (status.type === "tracking" && state.phase === "playing") updateTrackingStatus(status.count);
   if (status.type === "error") {
-    elements.trackingStatusText.textContent = "Tracking is recovering…";
+    if (state.phase === "registering" || state.phase === "countdown") {
+      elements.registrationStatusText.textContent = "Tracking is recovering…";
+    } else if (state.phase === "playing") {
+      elements.trackingStatusText.textContent = "Tracking is recovering…";
+    }
     elements.statusLive.textContent = "Hand tracking is recovering.";
   }
 });
 
 function updateTrackingStatus(count) {
-  if (count >= 2) {
-    elements.trackingStatus.classList.add("two-hands");
-    elements.trackingStatusText.textContent = "Two hands ready";
-  } else if (count === 1) {
-    elements.trackingStatus.classList.remove("two-hands");
-    elements.trackingStatusText.textContent = "One hand ready — show your other hand to use both";
+  const needed = getRequiredHandCount(state.playMode);
+  const ready = count >= needed;
+  elements.trackingStatus.classList.toggle("hands-ready", ready);
+  if (state.playMode === "pvp") {
+    elements.trackingStatusText.textContent = ready ? "Both players are in view" : "Keep one hand per player in view";
   } else {
-    elements.trackingStatus.classList.remove("two-hands");
-    elements.trackingStatusText.textContent = "Show one or both hands to the camera";
+    elements.trackingStatusText.textContent = count ? "Hand tracking is ready" : "Show a hand to the camera";
   }
-}
-
-function selectedValue(name) {
-  return document.querySelector(`input[name="${name}"]:checked`).value;
 }
 
 async function requestCamera() {
@@ -103,74 +184,167 @@ async function requestCamera() {
       frameRate: { ideal: 30, max: 30 },
     },
   });
+  elements.registrationVideo.srcObject = stream;
   elements.video.srcObject = stream;
-  await elements.video.play();
+  await Promise.all([elements.registrationVideo.play(), elements.video.play()]);
   state.stream = stream;
 }
 
 function stopCamera() {
+  cancelRegistrationCountdown();
   tracker.stop();
   state.stream?.getTracks().forEach((track) => track.stop());
   state.stream = null;
+  elements.registrationVideo.srcObject = null;
   elements.video.srcObject = null;
 }
 
+function setRegistrationCopy() {
+  const isPvp = state.playMode === "pvp";
+  elements.registration.classList.toggle("solo-mode", !isPvp);
+  elements.registration.classList.toggle("pvp-mode", isPvp);
+  elements.registrationPlural.textContent = isPvp ? "s" : "";
+  elements.registrationInstruction.textContent = isPvp
+    ? "Each player raises one hand. Keep both hands comfortably visible for the full countdown."
+    : "Raise one or both hands. Keep them comfortably visible for the full countdown.";
+  elements.playerTwoKey.hidden = !isPvp;
+  elements.registrationTip.hidden = !isPvp;
+  elements.registrationStatusText.textContent = isPvp ? "Looking for two players…" : "Looking for your hand…";
+  elements.registrationStatus.classList.remove("is-ready");
+}
+
 async function startWithCamera() {
+  configureFromSetup();
+  state.inputMode = "camera";
+  state.playerSlots = [];
   elements.cameraStart.disabled = true;
-  elements.cameraStart.textContent = "Loading hand tracking…";
-  elements.cameraMessage.textContent = "Your browser may ask for camera permission. The hand model stays on this device.";
+  elements.cameraStart.textContent = "Preparing camera…";
+  elements.cameraMessage.textContent = "Your browser may ask for camera permission. Images never leave this device.";
+  setRegistrationCopy();
   try {
     await Promise.all([requestCamera(), tracker.initialize()]);
+    showPanel(elements.registration, "registering");
     tracker.start();
-    startSession("camera");
+    elements.statusLive.textContent = "Camera ready. Raise your hands to register.";
   } catch (error) {
     stopCamera();
-    elements.cameraMessage.textContent = `${error.message || "The camera could not start."} You can still play with the keyboard.`;
-    elements.keyboardStart.focus();
+    showPanel(elements.setup, "setup");
+    elements.cameraMessage.textContent = `${error.message || "The camera could not start."} You can still try solo mode with the keyboard.`;
+    elements.keyboardStart.focus({ preventScroll: true });
   } finally {
     elements.cameraStart.disabled = false;
-    elements.cameraStart.innerHTML = '<span aria-hidden="true">◉</span> Use camera &amp; start';
+    elements.cameraStart.textContent = "Continue with camera";
   }
 }
 
-function startSession(mode) {
+function lockPlayerSlots(hands) {
+  if (state.playMode !== "pvp") return;
+  state.playerSlots = visibleHandEntries(hands).slice(0, 2).map(({ index }) => index);
+}
+
+function handleRegistration(hands) {
+  const visibleEntries = visibleHandEntries(hands);
+  const needed = getRequiredHandCount(state.playMode);
+  const ready = visibleEntries.length >= needed;
+  if (!ready) {
+    if (state.phase === "countdown") {
+      cancelRegistrationCountdown();
+      state.phase = "registering";
+      state.playerSlots = [];
+      elements.statusLive.textContent = "Countdown reset. Keep your hands in view.";
+    }
+    const missing = needed - visibleEntries.length;
+    elements.registrationStatus.classList.remove("is-ready");
+    elements.registrationStatusText.textContent = state.playMode === "pvp"
+      ? `${missing === 2 ? "Two hands" : "One more hand"} needed`
+      : "Raise a hand to continue";
+    return;
+  }
+
+  elements.registrationStatus.classList.add("is-ready");
+  elements.registrationStatusText.textContent = state.playMode === "pvp" ? "Both players registered" : "Hands registered";
+  if (state.phase === "registering") {
+    lockPlayerSlots(hands);
+    startRegistrationCountdown();
+  }
+}
+
+function startRegistrationCountdown() {
+  state.phase = "countdown";
+  state.countdownEndsAt = performance.now() + REGISTRATION_COUNTDOWN_MS;
+  elements.countdownBadge.hidden = false;
+  elements.statusLive.textContent = "Hands registered. Starting in three seconds.";
+  cancelAnimationFrame(state.countdownAnimationId);
+  state.countdownAnimationId = requestAnimationFrame(updateRegistrationCountdown);
+}
+
+function updateRegistrationCountdown(now) {
+  if (state.phase !== "countdown") return;
+  const remaining = Math.max(0, state.countdownEndsAt - now);
+  elements.countdownValue.textContent = Math.max(1, Math.ceil(remaining / 1000));
+  if (remaining <= 0) {
+    elements.countdownBadge.hidden = true;
+    startSession("camera");
+    return;
+  }
+  state.countdownAnimationId = requestAnimationFrame(updateRegistrationCountdown);
+}
+
+function cancelRegistrationCountdown() {
+  cancelAnimationFrame(state.countdownAnimationId);
+  state.countdownAnimationId = null;
+  elements.countdownBadge.hidden = true;
+  elements.countdownValue.textContent = "3";
+}
+
+function cancelRegistration() {
+  stopCamera();
+  state.players = [];
+  renderCursors(elements.registrationCursors);
+  showPanel(elements.setup, "setup");
+  elements.cameraMessage.textContent = "";
+  elements.cameraStart.focus({ preventScroll: true });
+}
+
+function startSession(inputMode) {
+  configureFromSetup();
   state.running = true;
   state.paused = false;
-  state.mode = mode;
-  state.score = 0;
-  state.streak = 0;
-  state.multiplier = 1;
-  state.bestStreak = 0;
+  state.phase = "playing";
+  state.inputMode = inputMode;
+  state.playerStats = [emptyPlayerStats(), emptyPlayerStats()];
   state.caught = 0;
   state.missed = 0;
-  state.pace = selectedValue("pace");
-  state.durationSeconds = Number(selectedValue("duration"));
   state.remainingSeconds = state.durationSeconds;
   state.startedAt = performance.now();
   state.pausedDuration = 0;
   state.lastFrame = state.startedAt;
   state.lastSpawn = state.startedAt - getPaceConfig(state.pace).spawnInterval * 0.55;
   state.objects = [];
-  state.players = mode === "keyboard" ? [{ x: 0.5, y: 0.72, radius: 44 }] : [];
+  if (inputMode === "keyboard") {
+    state.playMode = "solo";
+    state.players = [{ x: 0.5, y: 0.72, radius: 44, ownerIndex: 0 }];
+  }
 
   elements.targets.replaceChildren();
-  elements.setup.hidden = true;
-  elements.results.hidden = true;
-  elements.play.hidden = false;
-  elements.video.hidden = mode !== "camera";
-  elements.trackingStatus.hidden = mode !== "camera";
-  updateTrackingStatus(0);
-  elements.board.classList.toggle("keyboard-mode", mode === "keyboard");
-  elements.inputHint.textContent = mode === "camera"
-    ? "Your palms control the circles. Catch garden shapes and avoid bombs and germs."
-    : "Use the arrow keys or W A S D. Catch garden shapes and avoid bombs and germs.";
+  showPanel(elements.play, "playing");
+  elements.video.hidden = inputMode !== "camera";
+  elements.trackingStatus.hidden = inputMode !== "camera";
+  elements.board.classList.toggle("keyboard-mode", inputMode === "keyboard");
+  elements.board.classList.toggle("pvp-mode", state.playMode === "pvp");
+  elements.playerTwoScoreCard.hidden = state.playMode !== "pvp";
+  updateTrackingStatus(state.players.filter(Boolean).length);
+  elements.inputHint.textContent = inputMode === "camera"
+    ? state.playMode === "pvp"
+      ? "Player 1 is teal · Player 2 is pink. Catch shapes before your neighbour does."
+      : "Your palms control the circles. Catch garden shapes and avoid hazards."
+    : "Use the arrow keys or W A S D. Catch garden shapes and avoid hazards.";
   elements.pause.textContent = "Pause";
   elements.pauseOverlay.hidden = true;
   updateStats();
-  renderCursors();
-  elements.play.scrollIntoView({ block: "start" });
+  renderCursors(elements.cursors);
   elements.board.focus({ preventScroll: true });
-  elements.statusLive.textContent = "Session started.";
+  elements.statusLive.textContent = state.playMode === "pvp" ? "Two-player challenge started." : "Session started.";
   cancelAnimationFrame(state.animationId);
   state.animationId = requestAnimationFrame(gameLoop);
 }
@@ -202,7 +376,7 @@ function spawnObject(now) {
 }
 
 function updateKeyboard(deltaSeconds) {
-  if (state.mode !== "keyboard") return;
+  if (state.inputMode !== "keyboard") return;
   const player = state.players[0];
   if (!player) return;
   const speed = 0.52 * deltaSeconds;
@@ -234,27 +408,39 @@ function gameLoop(now) {
   spawnObject(now);
   updateObjects(deltaSeconds, now);
   updateStats();
-  renderCursors();
+  renderCursors(elements.cursors);
   state.animationId = requestAnimationFrame(gameLoop);
+}
+
+function closestCollidingPlayer(objectPosition, players) {
+  let closest = null;
+  players.forEach((player) => {
+    if (!player || player.interactive === false || !circlesOverlap(objectPosition, player)) return;
+    const distance = Math.hypot(objectPosition.x - player.x, objectPosition.y - player.y);
+    if (!closest || distance < closest.distance) closest = { ownerIndex: player.ownerIndex ?? 0, distance };
+  });
+  return closest?.ownerIndex ?? -1;
 }
 
 function updateObjects(deltaSeconds, now) {
   const boardHeight = elements.board.clientHeight;
   const boardWidth = elements.board.clientWidth;
   const fallRate = getPaceConfig(state.pace).fallSpeed / Math.max(boardHeight, 1);
+  const boardPlayers = state.players.map((player) => player ? {
+    ...player,
+    x: player.x * boardWidth,
+    y: player.y * boardHeight,
+  } : null);
 
   for (const object of [...state.objects]) {
     object.y += fallRate * deltaSeconds;
     const sway = Math.sin(now / 650 + object.phase) * object.drift;
     const displayX = clamp(object.x + sway, 0.05, 0.95);
     object.node.style.transform = `translate(${displayX * boardWidth}px, ${object.y * boardHeight}px)`;
-
-    const caught = state.players.some((player) => player && player.interactive !== false && circlesOverlap(
-      { x: displayX * boardWidth, y: object.y * boardHeight, radius: object.radius },
-      { x: player.x * boardWidth, y: player.y * boardHeight, radius: player.radius },
-    ));
-    if (caught) {
-      resolveObject(object);
+    const objectPosition = { x: displayX * boardWidth, y: object.y * boardHeight, radius: object.radius };
+    const ownerIndex = closestCollidingPlayer(objectPosition, boardPlayers);
+    if (ownerIndex >= 0) {
+      resolveObject(object, ownerIndex);
     } else if (object.y > 1.08) {
       if (object.type.hazard) removeObject(object);
       else missObject(object);
@@ -267,15 +453,15 @@ function removeObject(object) {
   state.objects = state.objects.filter((candidate) => candidate.id !== object.id);
 }
 
-function resolveObject(object) {
-  const result = applyObjectScore(state, object.type);
-  state.score = result.score;
-  state.streak = result.streak;
-  state.multiplier = result.multiplier;
-  state.bestStreak = Math.max(state.bestStreak, state.streak);
+function resolveObject(object, ownerIndex) {
+  const current = state.playerStats[ownerIndex] ?? state.playerStats[0];
+  const result = applyObjectScore(current, object.type);
+  Object.assign(current, result);
+  current.bestStreak = Math.max(current.bestStreak, current.streak);
   object.node.classList.add(object.type.hazard ? "hazard-hit" : "collected");
   setTimeout(() => object.node.remove(), 260);
   state.objects = state.objects.filter((candidate) => candidate.id !== object.id);
+  const playerName = state.playMode === "pvp" ? `Player ${ownerIndex + 1}` : "You";
 
   if (object.type.hazard) {
     elements.board.classList.remove("hazard-flash");
@@ -283,18 +469,13 @@ function resolveObject(object) {
     elements.board.classList.add("hazard-flash");
     setTimeout(() => elements.board.classList.remove("hazard-flash"), 300);
     const pointsLost = Math.abs(result.delta);
-    elements.statusLive.textContent = pointsLost
-      ? `${object.type.label} hit. ${pointsLost} points lost. Streak reset.`
-      : `${object.type.label} hit. Streak reset.`;
+    elements.statusLive.textContent = `${playerName} hit a ${object.type.label}. ${pointsLost ? `${pointsLost} points lost. ` : ""}Streak reset.`;
     return;
   }
 
+  current.caught += 1;
   state.caught += 1;
-  if (state.multiplier > 1) {
-    elements.statusLive.textContent = `${object.type.label} caught for ${result.delta} points. ${state.multiplier} times streak multiplier.`;
-  } else if (state.caught === 1 || state.caught % 5 === 0) {
-    elements.statusLive.textContent = `${state.caught} shapes caught.`;
-  }
+  elements.statusLive.textContent = `${playerName} caught a ${object.type.label} for ${result.delta} points.`;
 }
 
 function missObject(object) {
@@ -303,8 +484,8 @@ function missObject(object) {
   if (state.missed >= getPaceConfig(state.pace).missLimit) endSession("misses");
 }
 
-function renderCursors() {
-  elements.cursors.forEach((cursor, index) => {
+function renderCursors(cursorElements) {
+  cursorElements.forEach((cursor, index) => {
     const player = state.players[index];
     cursor.hidden = !player;
     if (!player) return;
@@ -313,12 +494,17 @@ function renderCursors() {
   });
 }
 
+function streakLabel(stats) {
+  if (!stats.streak) return "Ready";
+  return stats.multiplier > 1 ? `${stats.streak} streak · ×${stats.multiplier}` : `${stats.streak} streak`;
+}
+
 function updateStats() {
   const config = getPaceConfig(state.pace);
-  elements.score.textContent = state.score;
-  elements.streak.textContent = state.streak;
-  elements.multiplier.textContent = `×${state.multiplier}`;
-  elements.multiplier.classList.toggle("active", state.multiplier > 1);
+  elements.playerOneScore.textContent = state.playerStats[0].score;
+  elements.playerOneStreak.textContent = streakLabel(state.playerStats[0]);
+  elements.playerTwoScore.textContent = state.playerStats[1].score;
+  elements.playerTwoStreak.textContent = streakLabel(state.playerStats[1]);
   elements.caught.textContent = state.caught;
   elements.missed.textContent = state.missed;
   elements.missLimit.textContent = config.missLimit;
@@ -330,14 +516,18 @@ function togglePause() {
   state.paused = !state.paused;
   if (state.paused) {
     state.pausedAt = performance.now();
-    if (state.mode === "camera") tracker.stop();
+    if (state.inputMode === "camera") {
+      tracker.stop();
+      state.players = [];
+      renderCursors(elements.cursors);
+    }
     elements.pause.textContent = "Continue";
     elements.pauseOverlay.hidden = false;
     elements.statusLive.textContent = "Session paused.";
   } else {
     state.pausedDuration += performance.now() - state.pausedAt;
     state.lastFrame = performance.now();
-    if (state.mode === "camera") tracker.start();
+    if (state.inputMode === "camera") tracker.start();
     elements.pause.textContent = "Pause";
     elements.pauseOverlay.hidden = true;
     elements.statusLive.textContent = "Session continued.";
@@ -350,37 +540,44 @@ function endSession(reason = "ended") {
   state.running = false;
   state.paused = false;
   cancelAnimationFrame(state.animationId);
-  stopCamera();
+  if (state.inputMode === "camera") stopCamera();
   state.objects.forEach((object) => object.node.remove());
   state.objects = [];
   state.players = [];
-  renderCursors();
+  renderCursors(elements.cursors);
 
-  elements.play.hidden = true;
-  elements.results.hidden = false;
-  elements.finalScore.textContent = state.score;
-  elements.finalCaught.textContent = state.caught;
-  elements.finalStreak.textContent = state.bestStreak;
+  showPanel(elements.results, "results");
+  const scores = state.playerStats.map((player) => player.score);
+  const matchResult = getMatchResult(scores[0], scores[1], state.playMode);
+  elements.resultsTitle.textContent = matchResult.title;
   elements.resultMessage.textContent = reason === "misses"
-    ? `You caught ${state.caught} garden ${state.caught === 1 ? "shape" : "shapes"}. Time for a gentle rest.`
-    : `You caught ${state.caught} garden ${state.caught === 1 ? "shape" : "shapes"}.`;
-  elements.statusLive.textContent = "Session complete.";
-  elements.results.scrollIntoView({ block: "start" });
+    ? `${state.caught} shapes caught. Time for a gentle rest.`
+    : matchResult.message;
+  elements.finalPlayerOneLabel.textContent = state.playMode === "pvp" ? "Player 1" : "Score";
+  elements.finalPlayerOneScore.textContent = scores[0];
+  elements.finalPlayerTwoCard.hidden = state.playMode !== "pvp";
+  elements.finalPlayerTwoScore.textContent = scores[1];
+  elements.finalCaught.textContent = state.caught;
+  elements.statusLive.textContent = `Session complete. ${matchResult.title}`;
   elements.playAgain.focus({ preventScroll: true });
 }
 
 function resetToSetup() {
-  elements.results.hidden = true;
-  elements.setup.hidden = false;
   elements.cameraMessage.textContent = "";
-  elements.setup.scrollIntoView({ block: "start" });
+  showPanel(elements.setup, "setup");
   elements.cameraStart.focus({ preventScroll: true });
+}
+
+function resetToWelcome() {
+  elements.cameraMessage.textContent = "";
+  showPanel(elements.landing, "landing");
+  elements.enterGame.focus({ preventScroll: true });
 }
 
 function handleKeyDown(event) {
   const key = event.key.toLowerCase();
   if (["arrowleft", "arrowright", "arrowup", "arrowdown", "w", "a", "s", "d"].includes(key)) {
-    if (state.running && state.mode === "keyboard") event.preventDefault();
+    if (state.running && state.inputMode === "keyboard") event.preventDefault();
     state.keys.add(key);
   }
   if (key === " " && state.running && event.target === elements.board) {
@@ -390,11 +587,18 @@ function handleKeyDown(event) {
   if (key === "escape" && state.running) togglePause();
 }
 
+elements.enterGame.addEventListener("click", () => {
+  showPanel(elements.setup, "setup");
+  elements.cameraStart.focus({ preventScroll: true });
+});
+elements.backToWelcome.addEventListener("click", resetToWelcome);
 elements.cameraStart.addEventListener("click", startWithCamera);
 elements.keyboardStart.addEventListener("click", () => startSession("keyboard"));
+elements.cancelRegistration.addEventListener("click", cancelRegistration);
 elements.pause.addEventListener("click", togglePause);
 elements.end.addEventListener("click", () => endSession("ended"));
 elements.playAgain.addEventListener("click", resetToSetup);
+elements.backHome.addEventListener("click", resetToWelcome);
 window.addEventListener("keydown", handleKeyDown);
 window.addEventListener("keyup", (event) => state.keys.delete(event.key.toLowerCase()));
 window.addEventListener("blur", () => state.keys.clear());
@@ -402,3 +606,48 @@ window.addEventListener("beforeunload", () => {
   stopCamera();
   tracker.dispose();
 });
+
+if (import.meta.env.DEV) {
+  window.__gentleCatch = {
+    getState: () => ({ phase: state.phase, playMode: state.playMode, running: state.running }),
+    simulateHands: (hands) => tracker.onHands(hands),
+  };
+  const preview = new URLSearchParams(window.location.search).get("preview");
+  if (preview === "pvp-registration") {
+    document.querySelector('input[name="playMode"][value="pvp"]').checked = true;
+    configureFromSetup();
+    state.inputMode = "camera";
+    state.players = [
+      { x: 0.3, y: 0.55, radius: 44, ownerIndex: 0 },
+      { x: 0.7, y: 0.55, radius: 44, ownerIndex: 1 },
+    ];
+    setRegistrationCopy();
+    showPanel(elements.registration, "countdown");
+    elements.registrationStatus.classList.add("is-ready");
+    elements.registrationStatusText.textContent = "Both players registered";
+    elements.countdownBadge.hidden = false;
+    renderCursors(elements.registrationCursors);
+  } else if (preview === "pvp-game") {
+    document.querySelector('input[name="playMode"][value="pvp"]').checked = true;
+    configureFromSetup();
+    state.inputMode = "camera";
+    state.playerStats = [
+      { ...emptyPlayerStats(), score: 55, streak: 4, multiplier: 2, caught: 4 },
+      { ...emptyPlayerStats(), score: 40, streak: 2, caught: 3 },
+    ];
+    state.caught = 7;
+    state.players = [
+      { x: 0.3, y: 0.62, radius: 44, ownerIndex: 0 },
+      { x: 0.7, y: 0.56, radius: 44, ownerIndex: 1 },
+    ];
+    showPanel(elements.play, "playing");
+    elements.video.hidden = true;
+    elements.trackingStatus.hidden = false;
+    elements.board.classList.add("keyboard-mode", "pvp-mode");
+    elements.playerTwoScoreCard.hidden = false;
+    elements.inputHint.textContent = "Player 1 is teal · Player 2 is pink. Catch shapes before your neighbour does.";
+    updateTrackingStatus(2);
+    updateStats();
+    renderCursors(elements.cursors);
+  }
+}
