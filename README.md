@@ -62,3 +62,8 @@ npm test          # unit tests
 npm run build     # production bundle
 npm run preview   # serve production bundle locally
 ```
+
+## Improvements that can be made
+
+1. Split screen display for the users instead of a shared display with both users using 1 hand each to play the game.
+2. Work on maybe adding more games?
