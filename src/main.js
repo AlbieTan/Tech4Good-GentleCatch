@@ -46,8 +46,8 @@ const state = {
   caught: 0,
   missed: 0,
   pace: "gentle",
-  durationSeconds: 60,
-  remainingSeconds: 60,
+  durationSeconds: 30,
+  remainingSeconds: 30,
   startedAt: 0,
   pausedAt: 0,
   pausedDuration: 0,
@@ -144,7 +144,7 @@ function startSession(mode) {
   state.caught = 0;
   state.missed = 0;
   state.pace = selectedValue("pace");
-  state.durationSeconds = Number(selectedValue("duration")) * 60;
+  state.durationSeconds = Number(selectedValue("duration"));
   state.remainingSeconds = state.durationSeconds;
   state.startedAt = performance.now();
   state.pausedDuration = 0;

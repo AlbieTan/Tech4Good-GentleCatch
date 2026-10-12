@@ -22,7 +22,7 @@ Open `http://localhost:5173`, select a pace, and allow camera access. Camera acc
 ## Controls and accessibility
 
 - **Gentle, Steady, Lively** adjust fall speed, spawn interval, object count, and missed-object allowance.
-- Sessions can be 1, 2, 3, or 5 minutes.
+- Sessions can be 20 seconds, 30 seconds, or 1 minute.
 - Pause or end a session at any time. Space or Escape also pauses when playing with the keyboard.
 - The game supports keyboard navigation, large controls, semantic labels, reduced motion, high contrast preferences, and responsive layouts.
 - One or both hands can be used simultaneously. Each palm gets its own cursor.

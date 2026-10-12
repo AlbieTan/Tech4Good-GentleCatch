@@ -141,7 +141,7 @@ legend { margin-bottom: 0.75rem; color: var(--forest); font-size: 1.05rem; font-
 .choice-group + .choice-group { align-self: end; }
 .segmented { display: grid; gap: 0.55rem; }
 .pace-options { grid-template-columns: repeat(3, 1fr); }
-.duration-options { grid-template-columns: repeat(4, 1fr); }
+.duration-options { grid-template-columns: repeat(3, 1fr); }
 .segmented label { min-width: 0; }
 .segmented input { position: absolute; opacity: 0; pointer-events: none; }
 .segmented span {
@@ -375,7 +375,7 @@ footer p { margin: 0; }
   .setup-panel { padding: 1.35rem; border-radius: 1.4rem; }
   .pace-options { grid-template-columns: 1fr; }
   .pace-options span { min-height: 3.5rem; flex-direction: row; justify-content: space-between; padding-inline: 1rem; text-align: left; }
-  .duration-options { grid-template-columns: repeat(2, 1fr); }
+  .duration-options { grid-template-columns: repeat(3, 1fr); }
   .start-actions { grid-template-columns: 1fr; }
   .site-header, .game-shell, footer { width: calc(100% - 1rem); }
   .game-toolbar { gap: 0.3rem; border-radius: 1rem; }
