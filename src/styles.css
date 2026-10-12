@@ -233,8 +233,23 @@ legend { margin-bottom: 0.75rem; color: var(--forest); font-size: 1.05rem; font-
   background: linear-gradient(160deg, transparent 0 14%, rgba(23, 63, 54, 0.18) 14.4% 18%, transparent 18.4% 25%, rgba(255,255,255,0.16) 25.4% 35%, transparent 35.4%);
   pointer-events: none;
 }
-#cameraVideo { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); opacity: 0.48; }
-.camera-wash { position: absolute; inset: 0; background: linear-gradient(180deg, rgba(213,239,231,0.35), rgba(238,235,194,0.55)); }
+.game-board:not(.keyboard-mode)::before { opacity: 0.55; }
+#cameraVideo {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transform: scaleX(-1);
+  opacity: 0.78;
+  filter: saturate(0.92) contrast(1.04);
+}
+.camera-wash {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(213,239,231,0.1), rgba(238,235,194,0.18));
+  pointer-events: none;
+}
 .targets { position: absolute; z-index: 3; inset: 0; }
 .falling-object {
   position: absolute;
