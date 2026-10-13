@@ -2,6 +2,8 @@
 
 Gentle Catch is a calm, camera-controlled movement game designed with older adults in mind and branded for Precious Active Ageing Centre. Leaves, flowers, hearts, and stars drift down the screen; players collect them with one or both hands while avoiding bombs and germs. Consecutive catches build a score multiplier, while touching a hazard deducts points and resets the streak.
 
+Built on Hakrrrm’s initial v1 prototype. AlbieTan developed v2 and v3, redesigning the UI and adding the two-player PvP and player-registration flows.
+
 The startup flow supports solo play and a local split-screen battle. Camera sessions do not begin immediately: players first enter a registration screen and show the required faces and hands. Once registration succeeds, those player slots stay frozen through the three-second countdown so brief tracking changes cannot restart it. Face-position tracking switches off during normal gameplay. If a registered hand stays out of frame, the round pauses, asks that player to return, and temporarily re-enables face-position tracking to reconnect the expected faces and hands before continuing. This is positional tracking only—not facial recognition—and no image or identity data is stored. Each player controls one half of the arena and receives the same sequence of objects, making the score duel easy to follow and fair.
 
 ## Why it runs well on a Raspberry Pi
