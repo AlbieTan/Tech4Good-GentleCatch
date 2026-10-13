@@ -69,10 +69,27 @@ export function getOrderedHandEntries(hands = []) {
 }
 
 export function getPlayerBoundary(faces = []) {
-  const ordered = faces.filter((face) => face && face.interactive !== false).sort((a, b) => a.x - b.x);
-  if (ordered.length < 2) return null;
-  if (ordered[1].x - ordered[0].x < 0.18) return null;
-  return clamp((ordered[0].x + ordered[1].x) / 2, 0.25, 0.75);
+  const ordered = faces.filter((face) => face && face.interactive !== false)
+    .sort((a, b) => (a.cameraX ?? a.x) - (b.cameraX ?? b.x));
+  if (ordered.length !== 2) return null;
+  const leftX = ordered[0].cameraX ?? ordered[0].x;
+  const rightX = ordered[1].cameraX ?? ordered[1].x;
+  if (rightX - leftX < 0.18) return null;
+  return clamp((leftX + rightX) / 2, 0.25, 0.75);
+}
+
+export function getPoseZonePresence(hands = [], faces = [], boundary = 0.5) {
+  return [0, 1].map((ownerIndex) => {
+    const face = faces.find((candidate) => candidate && candidate.interactive !== false
+      && (ownerIndex === 0 ? (candidate.cameraX ?? candidate.x) < boundary
+        : (candidate.cameraX ?? candidate.x) >= boundary));
+    return {
+      face: Boolean(face),
+      hand: Boolean(face && hands.some((hand) => hand && hand.interactive !== false
+        && hand.personId === face.personId)),
+      personId: face?.personId ?? null,
+    };
+  });
 }
 
 export function assignPvpHands(hands = [], boundary = 0.5, previousPlayers = []) {

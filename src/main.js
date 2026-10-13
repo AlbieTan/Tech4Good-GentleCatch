@@ -9,6 +9,7 @@ import {
   getMissingPlayerIndices,
   getPlayerBoundary,
   getOrderedHandEntries,
+  getPoseZonePresence,
   getPaceConfig,
   getPvpSpawnX,
   getRequiredHandCount,
@@ -28,6 +29,7 @@ import {
   REGISTRATION_STABLE_MS,
 } from "./gameLogic.js";
 import { HandTracker } from "./handTracker.js";
+import { PoseTracker } from "./poseTracker.js";
 
 const $ = (selector) => document.querySelector(selector);
 const panels = [$("#landingPanel"), $("#setupPanel"), $("#registrationPanel"), $("#playPanel"), $("#resultsPanel")];
@@ -40,6 +42,8 @@ const elements = {
   enterGame: $("#enterGame"),
   backToWelcome: $("#backToWelcome"),
   cameraStart: $("#cameraStart"),
+  poseTrackerOption: $("#poseTrackerOption"),
+  poseTrackerToggle: $("#poseTrackerToggle"),
   keyboardStart: $("#keyboardStart"),
   cameraMessage: $("#cameraMessage"),
   cancelRegistration: $("#cancelRegistration"),
@@ -48,6 +52,7 @@ const elements = {
   registrationInstruction: $("#registrationInstruction"),
   registrationStatus: $("#registrationStatus"),
   registrationStatusText: $("#registrationStatus strong"),
+  registrationDiagnostics: $("#registrationDiagnostics"),
   registrationTip: $(".registration-tip"),
   faceModelStatus: $("#faceModelStatus"),
   facePlayers: [$("#facePlayerOne"), $("#facePlayerTwo")],
@@ -67,6 +72,7 @@ const elements = {
   cursors: [...document.querySelectorAll("#playerCursors .player-cursor")],
   trackingStatus: $("#trackingStatus"),
   trackingStatusText: $("#trackingStatus strong"),
+  trackingDiagnostics: $("#trackingDiagnostics"),
   trackingRecovery: $("#trackingRecovery"),
   recoveryTitle: $("#recoveryTitle"),
   recoveryMessage: $("#recoveryMessage"),
@@ -108,6 +114,8 @@ const state = {
   paused: false,
   inputMode: "keyboard",
   playMode: "solo",
+  trackerKind: "hand",
+  playerPoseIds: [null, null],
   playerStats: [emptyPlayerStats(), emptyPlayerStats()],
   caught: 0,
   missed: 0,
@@ -154,6 +162,7 @@ function selectedValue(name) {
 
 function configureFromSetup() {
   state.playMode = selectedValue("playMode");
+  state.trackerKind = state.playMode === "pvp" && elements.poseTrackerToggle.checked ? "pose" : "hand";
   state.pace = selectedValue("pace");
   state.durationSeconds = Number(selectedValue("duration"));
   state.remainingSeconds = state.durationSeconds;
@@ -179,6 +188,15 @@ function freshTracking(hands, faces, now) {
 function registrationPlayers(hands) {
   const entries = visibleHandEntries(hands);
   if (state.playMode === "pvp") {
+    if (state.trackerKind === "pose") {
+      const orderedFaces = visibleFaceEntries(state.faces)
+        .map(({ hand: face }) => face)
+        .sort((a, b) => (a.cameraX ?? a.x) - (b.cameraX ?? b.x));
+      return [0, 1].map((ownerIndex) => {
+        const hand = hands.find((candidate) => candidate?.personId === orderedFaces[ownerIndex]?.personId);
+        return hand ? { ...hand, radius: 44, ownerIndex } : null;
+      });
+    }
     const boundary = getPlayerBoundary(state.faces) ?? state.playerBoundary;
     return assignPvpHands(hands, boundary).map((hand, ownerIndex) =>
       hand ? { ...hand, radius: 44, ownerIndex } : null,
@@ -189,7 +207,9 @@ function registrationPlayers(hands) {
 
 function gameplayPlayers(hands) {
   if (state.playMode === "pvp") {
-    const assigned = assignPvpHands(hands, state.playerBoundary, state.players);
+    const assigned = state.trackerKind === "pose"
+      ? state.playerPoseIds.map((id) => hands.find((hand) => hand?.personId === id) ?? null)
+      : assignPvpHands(hands, state.playerBoundary, state.players);
     return assigned.map((hand, ownerIndex) => {
       return hand ? {
         ...hand,
@@ -207,19 +227,29 @@ function activePlayerCount() {
   return state.playMode === "pvp" ? 2 : 1;
 }
 
+function playerZones(hands, faces, boundary, playerCount) {
+  if (state.trackerKind === "pose" && playerCount === 2) {
+    return getPoseZonePresence(hands, faces, boundary);
+  }
+  return getZonePresence(hands, faces, boundary, playerCount);
+}
+
 function updateRecoveryOverlay(hands = [], faces = [], now = performance.now()) {
   const playerCount = activePlayerCount();
   const fresh = freshTracking(hands, faces, now);
-  const zones = getZonePresence(fresh.hands, fresh.faces, state.playerBoundary, playerCount);
+  const zones = playerZones(fresh.hands, fresh.faces, state.playerBoundary, playerCount);
   const handsReady = zones.every((zone) => zone.hand);
-  const facesReady = zones.every((zone) => zone.face);
+  const facesReady = zones.every((zone) => zone.face)
+    && (state.trackerKind !== "pose" || fresh.faces.length === playerCount);
   const missing = state.recoveryMissingPlayers;
   elements.recoveryTitle.textContent = state.playMode === "pvp" && missing.length === 1
     ? `Player ${missing[0] + 1}, come back into frame`
     : state.playMode === "pvp" ? "Players, come back into frame" : "Come back into frame";
   elements.recoveryMessage.textContent = facesReady && handsReady
-    ? "Keep both faces and hands in view while we reconnect…"
-    : "Each player: look at the camera and raise one hand beside your face, on your side.";
+    ? "Keep both players in view while we reconnect…"
+    : state.trackerKind === "pose"
+      ? "Each player: stay on your side and raise one visible wrist."
+      : "Each player: look at the camera and raise one hand beside your face, on your side.";
   if (playerCount === 2) {
     elements.recoveryFaceCheck.textContent = `${zones[0].face && zones[0].hand ? "✓" : "○"} Player 1`;
     elements.recoveryHandCheck.textContent = `${zones[1].face && zones[1].hand ? "✓" : "○"} Player 2`;
@@ -249,6 +279,11 @@ function startTrackingRecovery(missingPlayers, now) {
 }
 
 function finishTrackingRecovery(hands, faces, now) {
+  if (state.trackerKind === "pose") {
+    const fresh = freshTracking(hands, faces, now);
+    state.playerPoseIds = getPoseZonePresence(fresh.hands, fresh.faces, state.playerBoundary)
+      .map((zone) => zone.personId);
+  }
   state.players = gameplayPlayers(hands);
   state.pausedDuration += Math.max(0, now - state.recoveryStartedAt);
   state.lastFrame = now;
@@ -290,7 +325,7 @@ function monitorGameplayPresence(now) {
   if (sustainedMissingPlayers.length) startTrackingRecovery(sustainedMissingPlayers, now);
 }
 
-const tracker = new HandTracker(elements.registrationVideo, (hands, faces) => {
+const handleTrackedPlayers = (hands, faces) => {
   if (state.inputMode !== "camera") return;
   if (isRegistrationLocked(state.phase)) {
     // Registration is immutable once the countdown starts. Brief detector
@@ -319,7 +354,9 @@ const tracker = new HandTracker(elements.registrationVideo, (hands, faces) => {
     state.players = gameplayPlayers(hands);
     monitorGameplayPresence(now);
   }
-}, (status) => {
+};
+
+const handleTrackerStatus = (status) => {
   if (state.inputMode !== "camera") return;
   if (isRegistrationLocked(state.phase)) return;
   if (status.type === "face-ready") {
@@ -327,7 +364,9 @@ const tracker = new HandTracker(elements.registrationVideo, (hands, faces) => {
     state.faceTrackingError = "";
     if (state.phase === "registering") {
       updateFaceLockProgress(state.faces, state.registrationHands);
-      elements.statusLive.textContent = "Face position tracking is ready.";
+      elements.statusLive.textContent = state.trackerKind === "pose"
+        ? "Body and wrist tracking is ready."
+        : "Face position tracking is ready.";
     } else if (state.recoveryActive) {
       elements.statusLive.textContent = "Face scanner ready. Waiting to reconnect player controls.";
     }
@@ -345,6 +384,11 @@ const tracker = new HandTracker(elements.registrationVideo, (hands, faces) => {
   if (status.type === "tracking" && state.phase === "playing" && !state.recoveryActive) {
     updateTrackingStatus(state.players.filter((player) => player?.interactive !== false).length);
   }
+  if (status.type === "tracking" && state.trackerKind === "pose") {
+    const message = `Bodies ${status.faceCount} · Wrists ${status.count} · ${status.fps ?? 0} FPS · IDs ${status.personIds?.join(", ") || "—"}`;
+    elements.registrationDiagnostics.textContent = message;
+    elements.trackingDiagnostics.textContent = message;
+  }
   if (status.type === "error") {
     if (state.phase === "registering" || state.phase === "countdown") {
       elements.registrationStatusText.textContent = "Tracking is recovering…";
@@ -353,16 +397,29 @@ const tracker = new HandTracker(elements.registrationVideo, (hands, faces) => {
     } else if (state.phase === "playing") {
       elements.trackingStatusText.textContent = "Tracking is recovering…";
     }
-    elements.statusLive.textContent = "Hand tracking is recovering.";
+    elements.statusLive.textContent = "Player tracking is recovering.";
   }
-});
+};
+
+let tracker = new HandTracker(elements.registrationVideo, handleTrackedPlayers, handleTrackerStatus);
+
+function selectTracker() {
+  const poseSelected = state.trackerKind === "pose";
+  if ((poseSelected && tracker instanceof PoseTracker) || (!poseSelected && tracker instanceof HandTracker)) return;
+  tracker.dispose();
+  tracker = poseSelected
+    ? new PoseTracker(elements.registrationVideo, handleTrackedPlayers, handleTrackerStatus)
+    : new HandTracker(elements.registrationVideo, handleTrackedPlayers, handleTrackerStatus);
+}
 
 function updateTrackingStatus(count) {
   const needed = getRequiredHandCount(state.playMode);
   const ready = count >= needed;
   elements.trackingStatus.classList.toggle("hands-ready", ready);
   if (state.playMode === "pvp") {
-    elements.trackingStatusText.textContent = ready ? "Both player controls connected" : "Tracking player hands…";
+    elements.trackingStatusText.textContent = ready
+      ? "Both player controls connected"
+      : state.trackerKind === "pose" ? "Tracking player wrists…" : "Tracking player hands…";
   } else {
     elements.trackingStatusText.textContent = count ? "Hand tracking is ready" : "Show a hand to the camera";
   }
@@ -411,7 +468,7 @@ function updateFaceLockProgress(faces = [], hands = [], now = performance.now())
   const requiredFaces = state.playMode === "pvp" ? 2 : 1;
   const fresh = freshTracking(hands, faces, now);
   const boundary = state.playMode === "pvp" ? getPlayerBoundary(fresh.faces) ?? state.playerBoundary : 0.5;
-  const zones = getZonePresence(fresh.hands, fresh.faces, boundary, requiredFaces);
+  const zones = playerZones(fresh.hands, fresh.faces, boundary, requiredFaces);
   elements.faceModelStatus.classList.toggle("is-ready", state.faceTrackingReady);
   elements.faceModelStatus.classList.toggle("is-error", Boolean(state.faceTrackingError));
   elements.faceModelStatus.textContent = state.faceTrackingError
@@ -430,11 +487,15 @@ function updateFaceLockProgress(faces = [], hands = [], now = performance.now())
 
 function setRegistrationCopy() {
   const isPvp = state.playMode === "pvp";
+  const isPose = state.trackerKind === "pose";
+  elements.registrationDiagnostics.hidden = !isPose;
   elements.registration.classList.toggle("solo-mode", !isPvp);
   elements.registration.classList.toggle("pvp-mode", isPvp);
   elements.registrationPlural.textContent = isPvp ? "s" : "";
-  elements.registrationInstruction.textContent = isPvp
-    ? "Stand side by side and raise one hand each beside your face. Keep your hand on your own side of the camera view."
+  elements.registrationInstruction.textContent = isPose
+    ? "Stand side by side, keep your shoulders visible, and raise one wrist each beside your face. Hold still while we assign each body to a player."
+    : isPvp
+      ? "Stand side by side and raise one hand each beside your face. Keep your hand on your own side of the camera view."
     : "Look at the camera and raise one hand beside your face. Keep your face and hand visible for the full countdown.";
   elements.playerTwoKey.hidden = !isPvp;
   elements.registrationTip.hidden = !isPvp;
@@ -442,15 +503,17 @@ function setRegistrationCopy() {
   updateFaceLockProgress([]);
   setRegistrationStatus(
     isPvp ? "waiting-pvp" : "waiting-solo",
-    isPvp ? "Looking for two players…" : "Looking for your face and hand…",
+    isPose ? "Looking for two bodies and raised wrists…" : isPvp ? "Looking for two players…" : "Looking for your face and hand…",
     false,
   );
 }
 
 async function startWithCamera() {
   configureFromSetup();
+  selectTracker();
   state.inputMode = "camera";
   state.playerFaceSlots = [];
+  state.playerPoseIds = [null, null];
   state.playerBoundary = 0.5;
   state.faces = [];
   state.registrationHands = [];
@@ -482,6 +545,11 @@ async function startWithCamera() {
 function lockPlayerSlots(faces) {
   const playerCount = state.playMode === "pvp" ? 2 : 1;
   if (playerCount === 2) state.playerBoundary = getPlayerBoundary(faces) ?? state.playerBoundary;
+  if (state.trackerKind === "pose") {
+    state.playerPoseIds = [...faces]
+      .sort((a, b) => (a.cameraX ?? a.x) - (b.cameraX ?? b.x))
+      .map((face) => face.personId);
+  }
   state.playerFaceSlots = visibleFaceEntries(faces).slice(0, playerCount).map(({ index }) => index);
 }
 
@@ -493,12 +561,13 @@ function handleRegistration(hands, faces, now) {
   const visibleFaces = visibleFaceEntries(fresh.faces);
   const neededFaces = state.playMode === "pvp" ? 2 : 1;
   const candidateBoundary = state.playMode === "pvp" ? getPlayerBoundary(fresh.faces) : null;
-  const zones = getZonePresence(fresh.hands, fresh.faces, candidateBoundary ?? state.playerBoundary, neededFaces);
+  const zones = playerZones(fresh.hands, fresh.faces, candidateBoundary ?? state.playerBoundary, neededFaces);
   const handsReady = state.playMode === "pvp"
-    ? Boolean(candidateBoundary) && zones.every((zone) => zone.hand)
+    ? candidateBoundary !== null && zones.every((zone) => zone.hand)
     : visibleEntries.length >= needed;
   const facesReady = state.faceTrackingReady && (state.playMode === "pvp"
-    ? Boolean(candidateBoundary) && zones.every((zone) => zone.face)
+    ? candidateBoundary !== null && zones.every((zone) => zone.face)
+      && (state.trackerKind !== "pose" || fresh.faces.length === 2)
     : visibleFaces.length >= neededFaces);
   const ready = handsReady && facesReady;
   if (!ready) {
@@ -506,8 +575,10 @@ function handleRegistration(hands, faces, now) {
     const missingHands = Math.max(0, needed - visibleEntries.length);
     const missingFaces = Math.max(0, neededFaces - visibleFaces.length);
     let key = `missing-hands-${missingHands}`;
-    let message = state.playMode === "pvp"
-      ? "One face and one raised hand beside it needed on each side"
+    let message = state.trackerKind === "pose"
+      ? "Two people needed, each with a visible face and raised wrist"
+      : state.playMode === "pvp"
+        ? "One face and one raised hand beside it needed on each side"
       : "Raise a hand beside your face to continue";
     if (state.faceTrackingError) {
       key = "face-error";
@@ -618,6 +689,7 @@ function startSession(inputMode) {
   showPanel(elements.play, "playing");
   elements.video.hidden = inputMode !== "camera";
   elements.trackingStatus.hidden = inputMode !== "camera";
+  elements.trackingDiagnostics.hidden = inputMode !== "camera" || state.trackerKind !== "pose";
   elements.board.classList.toggle("keyboard-mode", inputMode === "keyboard");
   elements.board.classList.toggle("pvp-mode", state.playMode === "pvp");
   elements.play.classList.toggle("pvp-mode", state.playMode === "pvp");
@@ -627,7 +699,9 @@ function startSession(inputMode) {
   updateTrackingStatus(state.players.filter(Boolean).length);
   elements.inputHint.textContent = inputMode === "camera"
     ? state.playMode === "pvp"
-      ? "Stay on your side of the camera. Raise one hand to control your lane, catch shapes and avoid hazards."
+      ? state.trackerKind === "pose"
+        ? "Stay on your side of the camera. Raise one wrist to control your lane, catch shapes and avoid hazards."
+        : "Stay on your side of the camera. Raise one hand to control your lane, catch shapes and avoid hazards."
       : "Your palms control the circles. Catch garden shapes and avoid hazards."
     : "Use the arrow keys or W A S D. Catch garden shapes and avoid hazards.";
   elements.pause.textContent = "Pause";
@@ -950,6 +1024,11 @@ elements.enterGame.addEventListener("click", () => {
 });
 elements.backToWelcome.addEventListener("click", resetToWelcome);
 elements.cameraStart.addEventListener("click", startWithCamera);
+document.querySelectorAll('input[name="playMode"]').forEach((radio) => {
+  radio.addEventListener("change", () => {
+    elements.poseTrackerOption.hidden = selectedValue("playMode") !== "pvp";
+  });
+});
 elements.keyboardStart.addEventListener("click", () => startSession("keyboard"));
 elements.cancelRegistration.addEventListener("click", cancelRegistration);
 elements.pause.addEventListener("click", togglePause);

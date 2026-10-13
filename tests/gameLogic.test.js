@@ -9,6 +9,7 @@ import {
   getMatchResult,
   getOrderedHandEntries,
   getPlayerBoundary,
+  getPoseZonePresence,
   getPaceConfig,
   getPvpSpawnX,
   getRequiredHandCount,
@@ -36,6 +37,7 @@ import {
   updateFaceSlots,
   updateHandSlots,
 } from "../src/handTrackingMath.js";
+import { normalizePosePlayers } from "../src/poseTrackingMath.js";
 
 describe("game helpers", () => {
   it("formats the session countdown", () => {
@@ -166,6 +168,19 @@ describe("game helpers", () => {
     expect(getPlayerBoundary([{ x: 0.25 }, { x: 0.3 }])).toBeNull();
   });
 
+  it("matches PvP wrists to their owning body even when wrists cross the center", () => {
+    const faces = [
+      { x: 0.25, cameraX: 0.25, personId: 7 },
+      { x: 0.75, cameraX: 0.75, personId: 9 },
+    ];
+    const hands = [{ x: 0.7, personId: 7 }, { x: 0.3, personId: 9 }];
+    expect(getPoseZonePresence(hands, faces, 0.5)).toEqual([
+      { face: true, hand: true, personId: 7 },
+      { face: true, hand: true, personId: 9 },
+    ]);
+    expect(getPoseZonePresence([hands[0]], faces, 0.5)[1].hand).toBe(false);
+  });
+
   it("spawns PvP objects safely inside the assigned lane", () => {
     expect(getPvpSpawnX(0, 0)).toBeGreaterThan(0.035);
     expect(getPvpSpawnX(0, 1)).toBeLessThan(0.465);
@@ -283,5 +298,27 @@ describe("hand tracking helpers", () => {
     expect(presentFaceSlots(slots, 1450)[0]).toMatchObject({ x: 0.25, interactive: true });
     expect(presentFaceSlots(slots, 1650)[0]).toMatchObject({ x: 0.25, interactive: false });
     expect(presentFaceSlots(slots, 2200)[0]).toBeNull();
+  });
+});
+
+describe("pose tracking helpers", () => {
+  it("keeps each wrist and face attached to one MoveNet person ID", () => {
+    const pose = (id, x) => ({
+      id,
+      score: 0.9,
+      keypoints: [
+        { name: "nose", x, y: 20, score: 0.9 },
+        { name: "left_shoulder", x: x - 8, y: 45, score: 0.9 },
+        { name: "right_shoulder", x: x + 8, y: 45, score: 0.9 },
+        { name: "left_wrist", x: x + 25, y: 55, score: 0.8 },
+        { name: "right_wrist", x: x - 20, y: 60, score: 0.7 },
+      ],
+    });
+    const result = normalizePosePlayers([pose(1, 30), pose(2, 70)], 100, 100, 1000);
+    expect(result.faces.map((face) => face.personId)).toEqual([1, 2]);
+    expect(result.hands.map((hand) => hand.personId)).toEqual([1, 2]);
+    expect(result.faces[0].cameraX).toBeCloseTo(0.7);
+    expect(result.hands[0].x).toBeCloseTo(0.45);
+    expect(result.hands[0].lastSeen).toBe(1000);
   });
 });

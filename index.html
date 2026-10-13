@@ -77,6 +77,10 @@
                 </span>
               </label>
             </div>
+            <label id="poseTrackerOption" class="tracker-option" hidden>
+              <input id="poseTrackerToggle" type="checkbox" checked />
+              <span><strong>Try body tracking (beta)</strong><small>Uses each player’s wrists instead of separate hand and face scans.</small></span>
+            </label>
           </fieldset>
 
           <div class="setup-options">
@@ -127,6 +131,7 @@
               <span class="pulse-dot" aria-hidden="true"></span>
               <strong>Starting face and hand tracking…</strong>
             </div>
+            <p id="registrationDiagnostics" class="tracker-diagnostics" hidden></p>
             <div id="faceLockProgress" class="face-lock-progress" aria-label="Player registration progress">
               <div class="face-lock-heading">
                 <span>Player check</span>
@@ -208,6 +213,7 @@
               <span class="tracking-dot" aria-hidden="true"></span>
               <strong>Looking for your hands</strong>
             </div>
+            <p id="trackingDiagnostics" class="tracker-diagnostics tracker-diagnostics-play" hidden></p>
             <div id="trackingRecovery" class="tracking-recovery" hidden role="alert" aria-live="assertive">
               <div class="tracking-recovery-card">
                 <span class="tracking-recovery-icon" aria-hidden="true">👋</span>
