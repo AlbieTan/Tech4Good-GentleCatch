@@ -13,7 +13,7 @@
     <div id="app">
       <header class="site-header">
         <div class="partner-lockup" aria-label="A project for Precious Active Ageing Centre with NTU Singapore">
-          <img class="partner-logo precious-logo" src="/brand/precious-aac.jpg" alt="Precious Active Ageing Centre" />
+          <img class="partner-logo precious-logo" src="/brand/precious-aac-transparent.png" alt="Precious Active Ageing Centre" />
           <span class="partner-divider" aria-hidden="true"></span>
           <img class="partner-logo ntu-logo" src="/brand/ntu.png" alt="Nanyang Technological University Singapore" />
         </div>
@@ -43,7 +43,7 @@
             <p class="welcome-card-label">A session in three gentle steps</p>
             <ol>
               <li><span>1</span><div><strong>Choose</strong><small>Solo or play together</small></div></li>
-              <li><span>2</span><div><strong>Wave hello</strong><small>Register your hands</small></div></li>
+              <li><span>2</span><div><strong>Wave hello</strong><small>Register face and hands</small></div></li>
               <li><span>3</span><div><strong>Catch</strong><small>Move at your own pace</small></div></li>
             </ol>
             <p class="comfort-note"><span aria-hidden="true">♥</span> Seated and standing play are both welcome.</p>
@@ -72,7 +72,7 @@
                 <input type="radio" name="playMode" value="pvp" />
                 <span class="mode-card">
                   <span class="mode-icon mode-icon-pvp" aria-hidden="true">● ●</span>
-                  <span><strong>Two-player challenge</strong><small>Two people · one hand each</small></span>
+                  <span><strong>Split-screen battle</strong><small>Two people · one hand each</small></span>
                   <span class="mode-check" aria-hidden="true">✓</span>
                 </span>
               </label>
@@ -102,7 +102,7 @@
           <div class="start-card">
             <div>
               <strong>Ready for the camera check?</strong>
-              <p>We will register your hands before the game begins.</p>
+              <p>We will register your face and hands before the game begins.</p>
             </div>
             <div class="start-actions">
               <button id="cameraStart" class="button button-primary" type="button" data-testid="camera-start">Continue with camera</button>
@@ -116,29 +116,49 @@
         <section id="registrationPanel" class="registration-panel screen-panel" aria-labelledby="registrationTitle" hidden>
           <div class="registration-copy">
             <button id="cancelRegistration" class="text-button" type="button">← Change setup</button>
-            <p class="eyebrow">Camera hand check</p>
-            <h2 id="registrationTitle">Raise your hand<span id="registrationPlural">s</span> to say hello</h2>
-            <p id="registrationInstruction">Keep your hands comfortably visible. We will begin after a three-second countdown.</p>
+            <p class="eyebrow">Camera registration</p>
+            <h2 id="registrationTitle">Look forward and raise your hand<span id="registrationPlural">s</span></h2>
+            <p id="registrationInstruction">Keep your face and hands comfortably visible. We will begin after a three-second countdown.</p>
             <div class="registration-players" aria-hidden="true">
               <span class="player-key player-one-key"><i></i> Player 1</span>
               <span id="playerTwoKey" class="player-key player-two-key"><i></i> Player 2</span>
             </div>
             <div id="registrationStatus" class="registration-status" role="status">
               <span class="pulse-dot" aria-hidden="true"></span>
-              <strong>Looking for hands…</strong>
+              <strong>Starting face and hand tracking…</strong>
             </div>
-            <p class="registration-tip">Stand side by side for two-player mode. Player 1 is on the left of the screen.</p>
+            <div id="faceLockProgress" class="face-lock-progress" aria-label="Player registration progress">
+              <div class="face-lock-heading">
+                <span>Player check</span>
+                <strong id="faceModelStatus">Starting scanner…</strong>
+              </div>
+              <div id="facePlayerOne" class="face-lock-player">
+                <span class="face-lock-number">1</span>
+                <span><strong>Player 1</strong><small>Show your face and hand</small></span>
+                <i aria-hidden="true">○</i>
+              </div>
+              <div id="facePlayerTwo" class="face-lock-player">
+                <span class="face-lock-number">2</span>
+                <span><strong>Player 2</strong><small>Show your face and hand</small></span>
+                <i aria-hidden="true">○</i>
+              </div>
+            </div>
+            <p class="registration-tip">Player 1 stays on the left; Player 2 stays on the right. Raise one hand beside your face on your own side.</p>
           </div>
           <div id="registrationStage" class="registration-stage">
             <video id="registrationVideo" muted playsinline aria-label="Mirrored camera preview for hand registration"></video>
             <div class="camera-soften" aria-hidden="true"></div>
             <div class="registration-guide" aria-hidden="true">
               <span class="guide-hand">✋</span>
-              <span>Keep hands inside this area</span>
+              <span>Keep faces and hands inside this area</span>
             </div>
             <div id="registrationCursors" class="player-cursors" aria-hidden="true">
               <div class="player-cursor hand-one" hidden><span></span></div>
               <div class="player-cursor hand-two" hidden><span></span></div>
+            </div>
+            <div id="registrationFaces" class="face-anchors" aria-hidden="true">
+              <div class="face-anchor face-one" hidden><span>1</span></div>
+              <div class="face-anchor face-two" hidden><span>2</span></div>
             </div>
             <div id="countdownBadge" class="countdown-badge" hidden aria-live="assertive">
               <small>Starting in</small><strong id="countdownValue">3</strong>
@@ -162,6 +182,23 @@
           <div id="gameBoard" class="game-board" tabindex="0" aria-describedby="playInstructions">
             <video id="cameraVideo" muted playsinline aria-label="Your mirrored camera view"></video>
             <div class="camera-wash" aria-hidden="true"></div>
+            <div id="pvpArena" class="pvp-arena" hidden aria-hidden="true">
+              <div class="battle-lane battle-lane-one">
+                <div class="lane-hud">
+                  <span>Player 1</span>
+                  <strong id="laneOneScore">0</strong>
+                  <small id="laneOneStreak">Ready</small>
+                </div>
+              </div>
+              <div class="battle-divider"><span>VS</span></div>
+              <div class="battle-lane battle-lane-two">
+                <div class="lane-hud">
+                  <span>Player 2</span>
+                  <strong id="laneTwoScore">0</strong>
+                  <small id="laneTwoStreak">Ready</small>
+                </div>
+              </div>
+            </div>
             <div id="targets" class="targets" aria-hidden="true"></div>
             <div id="playerCursors" class="player-cursors" aria-hidden="true">
               <div class="player-cursor hand-one" hidden><span></span><b>1</b></div>
@@ -170,6 +207,18 @@
             <div id="trackingStatus" class="tracking-status" hidden>
               <span class="tracking-dot" aria-hidden="true"></span>
               <strong>Looking for your hands</strong>
+            </div>
+            <div id="trackingRecovery" class="tracking-recovery" hidden role="alert" aria-live="assertive">
+              <div class="tracking-recovery-card">
+                <span class="tracking-recovery-icon" aria-hidden="true">👋</span>
+                <strong id="recoveryTitle">Come back into frame</strong>
+                <small id="recoveryMessage">Looking for your face and hand…</small>
+                <div class="recovery-checks" aria-hidden="true">
+                  <span id="recoveryFaceCheck">○ Face</span>
+                  <span id="recoveryHandCheck">○ Hand</span>
+                </div>
+                <p>The round is paused while we reconnect you.</p>
+              </div>
             </div>
             <div id="pauseOverlay" class="pause-overlay" hidden>
               <div><span aria-hidden="true">Ⅱ</span><strong>Taking a pause</strong><small>Continue whenever you are ready.</small></div>
