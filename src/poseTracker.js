@@ -125,7 +125,7 @@ export class PoseTracker {
       const resultAt = performance.now();
       const fps = this.lastResultAt ? Math.round(1000 / Math.max(1, resultAt - this.lastResultAt)) : 0;
       this.lastResultAt = resultAt;
-      this.onHands(result.hands, result.faces);
+      this.onHands(result.hands, result.faces, result.wrists);
       this.onStatus({
         type: "tracking",
         count: result.hands.length,

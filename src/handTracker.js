@@ -8,6 +8,9 @@ import {
 
 const TRACKING_WIDTH = 384;
 const TRACKING_HEIGHT = 216;
+const FACE_TRACKING_WIDTH = 640;
+const FACE_TRACKING_HEIGHT = 360;
+const FACE_FRAME_INTERVAL_MS = 1000 / 8;
 const TARGET_FRAME_INTERVAL_MS = 1000 / 24;
 
 export class HandTracker {
@@ -26,6 +29,7 @@ export class HandTracker {
     this.presentationAnimationId = null;
     this.lastPresentationTime = 0;
     this.lastCaptureTime = -Infinity;
+    this.lastFaceCaptureTime = -Infinity;
     this.lastVideoTime = -1;
     this.slots = Array(MAX_HANDS).fill(null);
     this.presentedSlots = Array(MAX_HANDS).fill(null);
@@ -113,6 +117,7 @@ export class HandTracker {
     this.presentedSlots = Array(MAX_HANDS).fill(null);
     this.faceSlots = [null, null];
     this.lastCaptureTime = -Infinity;
+    this.lastFaceCaptureTime = -Infinity;
     this.lastPresentationTime = performance.now();
     this.scheduleFrame();
     this.presentationAnimationId = requestAnimationFrame((now) => this.presentHands(now));
@@ -120,6 +125,7 @@ export class HandTracker {
 
   setFaceTrackingEnabled(enabled) {
     this.faceTrackingEnabled = Boolean(enabled);
+    this.lastFaceCaptureTime = -Infinity;
     if (!this.faceTrackingEnabled) this.faceSlots = [null, null];
     this.worker?.postMessage({ type: "SET_FACE_TRACKING", enabled: this.faceTrackingEnabled });
   }
@@ -138,6 +144,7 @@ export class HandTracker {
     this.video = video;
     this.lastVideoTime = -1;
     this.lastCaptureTime = -Infinity;
+    this.lastFaceCaptureTime = -Infinity;
     this.inFlight = false;
     if (wasRunning) this.scheduleFrame();
   }
@@ -192,18 +199,36 @@ export class HandTracker {
     this.inFlight = true;
     this.lastVideoTime = this.video.currentTime;
     this.lastCaptureTime = timestampMs;
+    const generation = this.generation;
     try {
       const bitmap = await createImageBitmap(this.video, {
         resizeWidth: TRACKING_WIDTH,
         resizeHeight: TRACKING_HEIGHT,
         resizeQuality: "low",
       });
-      if (!this.running) {
+      let faceBitmap = null;
+      if (this.faceTrackingEnabled && timestampMs - this.lastFaceCaptureTime >= FACE_FRAME_INTERVAL_MS) {
+        try {
+          faceBitmap = await createImageBitmap(this.video, {
+            resizeWidth: FACE_TRACKING_WIDTH,
+            resizeHeight: FACE_TRACKING_HEIGHT,
+            resizeQuality: "medium",
+          });
+          this.lastFaceCaptureTime = timestampMs;
+        } catch (error) {
+          this.onStatus({ type: "error", message: error?.message || "Could not read a face frame." });
+        }
+      }
+      if (!this.running || generation !== this.generation) {
         bitmap.close();
+        faceBitmap?.close();
         this.inFlight = false;
         return;
       }
-      this.worker.postMessage({ type: "DETECT", bitmap, timestampMs, generation: this.generation }, [bitmap]);
+      this.worker.postMessage(
+        { type: "DETECT", bitmap, faceBitmap, timestampMs, generation },
+        faceBitmap ? [bitmap, faceBitmap] : [bitmap],
+      );
     } catch (error) {
       this.inFlight = false;
       this.onStatus({ type: "error", message: error?.message || "Could not read the camera frame." });

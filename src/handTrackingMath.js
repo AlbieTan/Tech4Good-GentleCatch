@@ -141,6 +141,8 @@ export function updateHandSlots(previousSlots, detections, timestamp) {
     const position = filterHandPosition(previous, mirrored, timestamp);
     slots[slotIndex] = {
       ...position,
+      wristX: Number.isFinite(detection.wristX) ? clamp(1 - detection.wristX, 0.03, 0.97) : position.x,
+      wristY: Number.isFinite(detection.wristY) ? clamp(detection.wristY, 0.04, 0.96) : position.y,
       label: detection.label,
       confidence: detection.confidence,
       lastSeen: timestamp,

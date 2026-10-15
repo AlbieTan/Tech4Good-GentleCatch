@@ -20,9 +20,10 @@ function mirrored(point, width, height) {
 }
 
 export function normalizePosePlayers(poses = [], width, height, timestamp) {
-  if (!width || !height) return { hands: [], faces: [] };
+  if (!width || !height) return { hands: [], faces: [], wrists: [] };
   const hands = [];
   const faces = [];
+  const trackedWrists = [];
 
   poses.filter((pose) => (pose.score ?? 0) >= MIN_POSE_SCORE).forEach((pose, index) => {
     const shoulders = [keypoint(pose, "left_shoulder"), keypoint(pose, "right_shoulder")].filter(usable);
@@ -36,6 +37,19 @@ export function normalizePosePlayers(poses = [], width, height, timestamp) {
 
     const personId = pose.id ?? `untracked-${index}`;
     const body = mirrored(bodyPoint, width, height);
+    for (const side of ["left", "right"]) {
+      const wrist = keypoint(pose, `${side}_wrist`);
+      if (usable(wrist)) {
+        trackedWrists.push({
+          ...mirrored(wrist, width, height),
+          personId,
+          side,
+          confidence: wrist.score,
+          lastSeen: timestamp,
+          interactive: true,
+        });
+      }
+    }
     if (usable(nose)) {
       const position = mirrored(nose, width, height);
       faces.push({
@@ -61,5 +75,5 @@ export function normalizePosePlayers(poses = [], width, height, timestamp) {
     }
   });
 
-  return { hands, faces };
+  return { hands, faces, wrists: trackedWrists };
 }

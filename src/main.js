@@ -1,24 +1,17 @@
 import "./styles.css";
 import {
   applyObjectScore,
-  assignPvpHands,
   circlesOverlap,
   clamp,
+  FACE_FRESH_MS,
   formatTime,
   getMatchResult,
   getMissingPlayerIndices,
   getPlayerBoundary,
-  getOrderedHandEntries,
-  getPoseZonePresence,
   getPaceConfig,
   getPvpSpawnX,
   getRequiredHandCount,
   getStableRecoveryStart,
-  getZonePresence,
-  HAND_FRESH_MS,
-  FACE_FRESH_MS,
-  isFreshDetection,
-  isRaisedHandBesideFace,
   isRegistrationLocked,
   mapHandToPvpLane,
   PVP_LANES,
@@ -26,10 +19,19 @@ import {
   randomObjectType,
   RECOVERY_STABLE_MS,
   REGISTRATION_COUNTDOWN_MS,
-  REGISTRATION_STABLE_MS,
 } from "./gameLogic.js";
 import { HandTracker } from "./handTracker.js";
-import { PoseTracker } from "./poseTracker.js";
+import { HybridTracker } from "./hybridTracker.js";
+import {
+  FACE_LOCK_MS,
+  HAND_LOCK_MS,
+  associateHandsToFaces,
+  getLockedHand,
+  handIdentity,
+  sameFaceCandidates,
+  selectRegistrationFaces,
+  snapshotFaces,
+} from "./registrationTracking.js";
 
 const $ = (selector) => document.querySelector(selector);
 const panels = [$("#landingPanel"), $("#setupPanel"), $("#registrationPanel"), $("#playPanel"), $("#resultsPanel")];
@@ -116,6 +118,8 @@ const state = {
   playMode: "solo",
   trackerKind: "hand",
   playerPoseIds: [null, null],
+  playerHandSides: [null, null],
+  playerHandSlots: [null, null],
   playerStats: [emptyPlayerStats(), emptyPlayerStats()],
   caught: 0,
   missed: 0,
@@ -131,6 +135,10 @@ const state = {
   players: [],
   faces: [],
   registrationHands: [],
+  registrationMatches: [],
+  registrationFaceCandidate: null,
+  registrationFaceLock: null,
+  registrationHandCandidates: [null, null],
   keys: new Set(),
   stream: null,
   animationId: null,
@@ -142,7 +150,6 @@ const state = {
   faceTrackingError: "",
   registrationStatusKey: "",
   lastRegistrationCheck: 0,
-  registrationReadySince: null,
   missingPlayerSince: [null, null],
   recoveryActive: false,
   recoveryMissingPlayers: [],
@@ -162,55 +169,33 @@ function selectedValue(name) {
 
 function configureFromSetup() {
   state.playMode = selectedValue("playMode");
-  state.trackerKind = state.playMode === "pvp" && elements.poseTrackerToggle.checked ? "pose" : "hand";
+  state.trackerKind = state.playMode === "pvp" && elements.poseTrackerToggle.checked ? "hybrid" : "hand";
   state.pace = selectedValue("pace");
   state.durationSeconds = Number(selectedValue("duration"));
   state.remainingSeconds = state.durationSeconds;
 }
 
-function visibleHandEntries(hands) {
-  return getOrderedHandEntries(hands).filter(({ hand }) => hand.interactive !== false);
-}
-
-function visibleFaceEntries(faces) {
-  return getOrderedHandEntries(faces).filter(({ hand: face }) => face.interactive !== false);
-}
-
-function freshTracking(hands, faces, now) {
-  const freshFaces = faces.filter((face) => isFreshDetection(face, now, FACE_FRESH_MS));
-  return {
-    hands: hands.filter((hand) => isFreshDetection(hand, now, HAND_FRESH_MS)
-      && isRaisedHandBesideFace(hand, freshFaces)),
-    faces: freshFaces,
-  };
-}
-
-function registrationPlayers(hands) {
-  const entries = visibleHandEntries(hands);
+function registrationPlayers() {
   if (state.playMode === "pvp") {
-    if (state.trackerKind === "pose") {
-      const orderedFaces = visibleFaceEntries(state.faces)
-        .map(({ hand: face }) => face)
-        .sort((a, b) => (a.cameraX ?? a.x) - (b.cameraX ?? b.x));
-      return [0, 1].map((ownerIndex) => {
-        const hand = hands.find((candidate) => candidate?.personId === orderedFaces[ownerIndex]?.personId);
-        return hand ? { ...hand, radius: 44, ownerIndex } : null;
-      });
-    }
-    const boundary = getPlayerBoundary(state.faces) ?? state.playerBoundary;
-    return assignPvpHands(hands, boundary).map((hand, ownerIndex) =>
+    return state.registrationMatches.map((hand, ownerIndex) =>
       hand ? { ...hand, radius: 44, ownerIndex } : null,
     );
   }
-  return entries.slice(0, 2).map(({ hand }) => ({ ...hand, radius: 44, ownerIndex: 0 }));
+  const hand = state.registrationMatches[0];
+  return hand ? [{ ...hand, radius: 44, ownerIndex: 0 }] : [];
 }
 
 function gameplayPlayers(hands) {
   if (state.playMode === "pvp") {
-    const assigned = state.trackerKind === "pose"
-      ? state.playerPoseIds.map((id) => hands.find((hand) => hand?.personId === id) ?? null)
-      : assignPvpHands(hands, state.playerBoundary, state.players);
+    const assigned = state.trackerKind === "hybrid"
+      ? state.playerPoseIds.map((id, index) => hands.find((hand) =>
+        hand?.personId === id && hand.side === state.playerHandSides[index]) ?? null)
+      : state.playerHandSlots.map((slot, index) =>
+        getLockedHand(hands, slot, index, state.playerBoundary));
     return assigned.map((hand, ownerIndex) => {
+      if (!hand && state.players[ownerIndex]) {
+        return { ...state.players[ownerIndex], interactive: false };
+      }
       return hand ? {
         ...hand,
         cameraX: hand.x,
@@ -220,48 +205,46 @@ function gameplayPlayers(hands) {
       } : null;
     });
   }
-  return hands.filter(Boolean).slice(0, 2).map((hand) => ({ ...hand, radius: 44, ownerIndex: 0 }));
+  const hand = getLockedHand(hands, state.playerHandSlots[0]);
+  return hand
+    ? [{ ...hand, radius: 44, ownerIndex: 0 }]
+    : state.players[0] ? [{ ...state.players[0], interactive: false }] : [];
 }
 
 function activePlayerCount() {
   return state.playMode === "pvp" ? 2 : 1;
 }
 
-function playerZones(hands, faces, boundary, playerCount) {
-  if (state.trackerKind === "pose" && playerCount === 2) {
-    return getPoseZonePresence(hands, faces, boundary);
-  }
-  return getZonePresence(hands, faces, boundary, playerCount);
-}
-
 function updateRecoveryOverlay(hands = [], faces = [], now = performance.now()) {
   const playerCount = activePlayerCount();
-  const fresh = freshTracking(hands, faces, now);
-  const zones = playerZones(fresh.hands, fresh.faces, state.playerBoundary, playerCount);
-  const handsReady = zones.every((zone) => zone.hand);
-  const facesReady = zones.every((zone) => zone.face)
-    && (state.trackerKind !== "pose" || fresh.faces.length === playerCount);
+  const selected = selectRegistrationFaces(faces, playerCount, now);
+  const onOriginalSides = playerCount === 1 || Boolean(selected
+    && (selected[0].face.cameraX ?? selected[0].face.x) < state.playerBoundary
+    && (selected[1].face.cameraX ?? selected[1].face.x) >= state.playerBoundary);
+  const facesReady = state.faceTrackingReady && Boolean(selected) && onOriginalSides;
+  const matches = facesReady ? associateHandsToFaces(hands, selected, state.trackerKind, now) : [];
+  const handsReady = matches.length === playerCount && matches.every(Boolean);
   const missing = state.recoveryMissingPlayers;
   elements.recoveryTitle.textContent = state.playMode === "pvp" && missing.length === 1
     ? `Player ${missing[0] + 1}, come back into frame`
     : state.playMode === "pvp" ? "Players, come back into frame" : "Come back into frame";
   elements.recoveryMessage.textContent = facesReady && handsReady
     ? "Keep both players in view while we reconnect…"
-    : state.trackerKind === "pose"
-      ? "Each player: stay on your side and raise one visible wrist."
+    : state.trackerKind === "hybrid"
+      ? "Each player: stay on your side and raise your registered hand."
       : "Each player: look at the camera and raise one hand beside your face, on your side.";
   if (playerCount === 2) {
-    elements.recoveryFaceCheck.textContent = `${zones[0].face && zones[0].hand ? "✓" : "○"} Player 1`;
-    elements.recoveryHandCheck.textContent = `${zones[1].face && zones[1].hand ? "✓" : "○"} Player 2`;
-    elements.recoveryFaceCheck.classList.toggle("is-ready", zones[0].face && zones[0].hand);
-    elements.recoveryHandCheck.classList.toggle("is-ready", zones[1].face && zones[1].hand);
+    elements.recoveryFaceCheck.textContent = `${selected?.[0] && matches[0] ? "✓" : "○"} Player 1`;
+    elements.recoveryHandCheck.textContent = `${selected?.[1] && matches[1] ? "✓" : "○"} Player 2`;
+    elements.recoveryFaceCheck.classList.toggle("is-ready", Boolean(facesReady && matches[0]));
+    elements.recoveryHandCheck.classList.toggle("is-ready", Boolean(facesReady && matches[1]));
   } else {
     elements.recoveryFaceCheck.textContent = `${facesReady ? "✓" : "○"} Face`;
     elements.recoveryHandCheck.textContent = `${handsReady ? "✓" : "○"} Hand`;
     elements.recoveryFaceCheck.classList.toggle("is-ready", facesReady);
     elements.recoveryHandCheck.classList.toggle("is-ready", handsReady);
   }
-  return facesReady && handsReady;
+  return { ready: facesReady && handsReady, selected, matches };
 }
 
 function startTrackingRecovery(missingPlayers, now) {
@@ -273,17 +256,14 @@ function startTrackingRecovery(missingPlayers, now) {
   state.faces = [];
   elements.trackingRecovery.hidden = false;
   elements.pause.disabled = true;
+  if (state.trackerKind === "hybrid") tracker.unlockPlayers();
   tracker.setFaceTrackingEnabled(true);
   updateRecoveryOverlay([], []);
   elements.statusLive.textContent = "The round is paused while player tracking reconnects.";
 }
 
-function finishTrackingRecovery(hands, faces, now) {
-  if (state.trackerKind === "pose") {
-    const fresh = freshTracking(hands, faces, now);
-    state.playerPoseIds = getPoseZonePresence(fresh.hands, fresh.faces, state.playerBoundary)
-      .map((zone) => zone.personId);
-  }
+function finishTrackingRecovery(hands, selected, matches, now) {
+  lockPlayerSlots(selected, matches);
   state.players = gameplayPlayers(hands);
   state.pausedDuration += Math.max(0, now - state.recoveryStartedAt);
   state.lastFrame = now;
@@ -302,10 +282,10 @@ function finishTrackingRecovery(hands, faces, now) {
 
 function handleRecoveryTracking(hands, faces, now) {
   state.faces = faces;
-  const ready = updateRecoveryOverlay(hands, faces, now);
+  const { ready, selected, matches } = updateRecoveryOverlay(hands, faces, now);
   state.recoveryReadySince = getStableRecoveryStart(state.recoveryReadySince, ready, now);
   if (state.recoveryReadySince !== null && now - state.recoveryReadySince >= RECOVERY_STABLE_MS) {
-    finishTrackingRecovery(hands, faces, now);
+    finishTrackingRecovery(hands, selected, matches, now);
   }
 }
 
@@ -335,15 +315,15 @@ const handleTrackedPlayers = (hands, faces) => {
   state.faces = faces;
   if (state.phase === "registering") {
     state.registrationHands = hands;
-    state.players = registrationPlayers(hands);
-    renderCursors(elements.registrationCursors);
-    renderFaceAnchors(elements.registrationFaces);
     const now = performance.now();
-    updateFaceLockProgress(faces, hands, now);
     if (now - state.lastRegistrationCheck >= 80) {
       state.lastRegistrationCheck = now;
       handleRegistration(hands, faces, now);
     }
+    state.players = registrationPlayers();
+    renderCursors(elements.registrationCursors);
+    renderFaceAnchors(elements.registrationFaces);
+    updateFaceLockProgress(faces, hands, now);
   } else if (state.phase === "playing" && state.running && !state.paused) {
     const now = performance.now();
     if (state.recoveryActive) {
@@ -364,8 +344,8 @@ const handleTrackerStatus = (status) => {
     state.faceTrackingError = "";
     if (state.phase === "registering") {
       updateFaceLockProgress(state.faces, state.registrationHands);
-      elements.statusLive.textContent = state.trackerKind === "pose"
-        ? "Body and wrist tracking is ready."
+      elements.statusLive.textContent = state.trackerKind === "hybrid"
+        ? "Body and hand tracking is ready."
         : "Face position tracking is ready.";
     } else if (state.recoveryActive) {
       elements.statusLive.textContent = "Face scanner ready. Waiting to reconnect player controls.";
@@ -384,8 +364,10 @@ const handleTrackerStatus = (status) => {
   if (status.type === "tracking" && state.phase === "playing" && !state.recoveryActive) {
     updateTrackingStatus(state.players.filter((player) => player?.interactive !== false).length);
   }
-  if (status.type === "tracking" && state.trackerKind === "pose") {
-    const message = `Bodies ${status.faceCount} · Wrists ${status.count} · ${status.fps ?? 0} FPS · IDs ${status.personIds?.join(", ") || "—"}`;
+  if (status.type === "tracking") {
+    const message = state.trackerKind === "hybrid"
+      ? `Bodies ${status.faceCount} · Hands ${status.count} · Matched ${status.matchedCount} · Pose ${status.fps ?? 0} FPS · IDs ${status.personIds?.join(", ") || "—"}`
+      : `Faces ${status.faceCount ?? 0} · Hands ${status.count ?? 0} · ${status.backend ?? "Local"}`;
     elements.registrationDiagnostics.textContent = message;
     elements.trackingDiagnostics.textContent = message;
   }
@@ -404,11 +386,11 @@ const handleTrackerStatus = (status) => {
 let tracker = new HandTracker(elements.registrationVideo, handleTrackedPlayers, handleTrackerStatus);
 
 function selectTracker() {
-  const poseSelected = state.trackerKind === "pose";
-  if ((poseSelected && tracker instanceof PoseTracker) || (!poseSelected && tracker instanceof HandTracker)) return;
+  const hybridSelected = state.trackerKind === "hybrid";
+  if ((hybridSelected && tracker instanceof HybridTracker) || (!hybridSelected && tracker instanceof HandTracker)) return;
   tracker.dispose();
-  tracker = poseSelected
-    ? new PoseTracker(elements.registrationVideo, handleTrackedPlayers, handleTrackerStatus)
+  tracker = hybridSelected
+    ? new HybridTracker(elements.registrationVideo, handleTrackedPlayers, handleTrackerStatus)
     : new HandTracker(elements.registrationVideo, handleTrackedPlayers, handleTrackerStatus);
 }
 
@@ -419,7 +401,7 @@ function updateTrackingStatus(count) {
   if (state.playMode === "pvp") {
     elements.trackingStatusText.textContent = ready
       ? "Both player controls connected"
-      : state.trackerKind === "pose" ? "Tracking player wrists…" : "Tracking player hands…";
+      : "Tracking player hands…";
   } else {
     elements.trackingStatusText.textContent = count ? "Hand tracking is ready" : "Show a hand to the camera";
   }
@@ -466,9 +448,11 @@ function setRegistrationStatus(key, text, ready) {
 
 function updateFaceLockProgress(faces = [], hands = [], now = performance.now()) {
   const requiredFaces = state.playMode === "pvp" ? 2 : 1;
-  const fresh = freshTracking(hands, faces, now);
-  const boundary = state.playMode === "pvp" ? getPlayerBoundary(fresh.faces) ?? state.playerBoundary : 0.5;
-  const zones = playerZones(fresh.hands, fresh.faces, boundary, requiredFaces);
+  const selected = selectRegistrationFaces(faces, requiredFaces, now);
+  const freshFaces = faces.filter((face) => face && face.interactive !== false
+    && now - face.lastSeen <= FACE_FRESH_MS);
+  const faceLocked = Boolean(selected && state.registrationFaceLock
+    && sameFaceCandidates(state.registrationFaceLock, selected, state.trackerKind));
   elements.faceModelStatus.classList.toggle("is-ready", state.faceTrackingReady);
   elements.faceModelStatus.classList.toggle("is-error", Boolean(state.faceTrackingError));
   elements.faceModelStatus.textContent = state.faceTrackingError
@@ -477,23 +461,27 @@ function updateFaceLockProgress(faces = [], hands = [], now = performance.now())
   elements.facePlayers.forEach((row, index) => {
     row.hidden = index >= requiredFaces;
     if (row.hidden) return;
-    const zone = zones[index];
-    const locked = zone.face && zone.hand;
+    const faceFound = Boolean(selected?.[index]) || (requiredFaces === 1
+      ? freshFaces.length > 0
+      : freshFaces.some((face) => index === 0 ? (face.cameraX ?? face.x) < 0.5
+        : (face.cameraX ?? face.x) >= 0.5));
+    const handFound = faceLocked && Boolean(state.registrationMatches[index]);
+    const locked = faceLocked && handFound;
     row.classList.toggle("is-locked", locked);
-    row.querySelector("small").textContent = `Face ${zone.face ? "✓" : "○"} · Hand ${zone.hand ? "✓" : "○"}`;
+    row.querySelector("small").textContent = `Face ${faceLocked ? "✓" : faceFound ? "◌" : "○"} · Hand ${handFound ? "✓" : "○"}`;
     row.querySelector("i").textContent = locked ? "✓" : "○";
   });
 }
 
 function setRegistrationCopy() {
   const isPvp = state.playMode === "pvp";
-  const isPose = state.trackerKind === "pose";
-  elements.registrationDiagnostics.hidden = !isPose;
+  const isHybrid = state.trackerKind === "hybrid";
+  elements.registrationDiagnostics.hidden = false;
   elements.registration.classList.toggle("solo-mode", !isPvp);
   elements.registration.classList.toggle("pvp-mode", isPvp);
   elements.registrationPlural.textContent = isPvp ? "s" : "";
-  elements.registrationInstruction.textContent = isPose
-    ? "Stand side by side, keep your shoulders visible, and raise one wrist each beside your face. Hold still while we assign each body to a player."
+  elements.registrationInstruction.textContent = isHybrid
+    ? "Stand side by side, keep your shoulders visible, and raise one hand each beside your face. Keep that hand visible throughout the round."
     : isPvp
       ? "Stand side by side and raise one hand each beside your face. Keep your hand on your own side of the camera view."
     : "Look at the camera and raise one hand beside your face. Keep your face and hand visible for the full countdown.";
@@ -503,7 +491,7 @@ function setRegistrationCopy() {
   updateFaceLockProgress([]);
   setRegistrationStatus(
     isPvp ? "waiting-pvp" : "waiting-solo",
-    isPose ? "Looking for two bodies and raised wrists…" : isPvp ? "Looking for two players…" : "Looking for your face and hand…",
+    isHybrid ? "Looking for two bodies and raised hands…" : isPvp ? "Looking for two players…" : "Looking for your face and hand…",
     false,
   );
 }
@@ -514,10 +502,15 @@ async function startWithCamera() {
   state.inputMode = "camera";
   state.playerFaceSlots = [];
   state.playerPoseIds = [null, null];
+  state.playerHandSides = [null, null];
+  state.playerHandSlots = [null, null];
   state.playerBoundary = 0.5;
   state.faces = [];
   state.registrationHands = [];
-  state.registrationReadySince = null;
+  state.registrationMatches = [];
+  state.registrationFaceCandidate = null;
+  state.registrationFaceLock = null;
+  state.registrationHandCandidates = [null, null];
   state.faceTrackingReady = tracker.faceTrackingReady;
   state.faceTrackingError = "";
   state.lastRegistrationCheck = 0;
@@ -542,71 +535,87 @@ async function startWithCamera() {
   }
 }
 
-function lockPlayerSlots(faces) {
+function lockPlayerSlots(selected, hands) {
   const playerCount = state.playMode === "pvp" ? 2 : 1;
+  const faces = selected.map(({ face }) => face);
   if (playerCount === 2) state.playerBoundary = getPlayerBoundary(faces) ?? state.playerBoundary;
-  if (state.trackerKind === "pose") {
-    state.playerPoseIds = [...faces]
-      .sort((a, b) => (a.cameraX ?? a.x) - (b.cameraX ?? b.x))
-      .map((face) => face.personId);
+  state.playerHandSlots = hands.map((hand) => hand?.registrationSlot ?? null);
+  if (state.trackerKind === "hybrid") {
+    state.playerPoseIds = faces.map((face) => face.personId);
+    state.playerHandSides = hands.map((hand) => hand?.side ?? null);
+    tracker.lockPlayers(state.playerPoseIds.map((personId, index) =>
+      ({ personId, side: state.playerHandSides[index] })));
   }
-  state.playerFaceSlots = visibleFaceEntries(faces).slice(0, playerCount).map(({ index }) => index);
+  state.playerFaceSlots = selected.map(({ slot }) => slot);
+}
+
+function resetFaceRegistration() {
+  state.registrationFaceCandidate = null;
+  state.registrationFaceLock = null;
+  state.registrationHandCandidates = [null, null];
+  state.registrationMatches = [];
 }
 
 function handleRegistration(hands, faces, now) {
   if (isRegistrationLocked(state.phase)) return;
-  const fresh = freshTracking(hands, faces, now);
-  const visibleEntries = visibleHandEntries(fresh.hands);
-  const needed = getRequiredHandCount(state.playMode);
-  const visibleFaces = visibleFaceEntries(fresh.faces);
-  const neededFaces = state.playMode === "pvp" ? 2 : 1;
-  const candidateBoundary = state.playMode === "pvp" ? getPlayerBoundary(fresh.faces) : null;
-  const zones = playerZones(fresh.hands, fresh.faces, candidateBoundary ?? state.playerBoundary, neededFaces);
-  const handsReady = state.playMode === "pvp"
-    ? candidateBoundary !== null && zones.every((zone) => zone.hand)
-    : visibleEntries.length >= needed;
-  const facesReady = state.faceTrackingReady && (state.playMode === "pvp"
-    ? candidateBoundary !== null && zones.every((zone) => zone.face)
-      && (state.trackerKind !== "pose" || fresh.faces.length === 2)
-    : visibleFaces.length >= neededFaces);
-  const ready = handsReady && facesReady;
-  if (!ready) {
-    state.registrationReadySince = null;
-    const missingHands = Math.max(0, needed - visibleEntries.length);
-    const missingFaces = Math.max(0, neededFaces - visibleFaces.length);
-    let key = `missing-hands-${missingHands}`;
-    let message = state.trackerKind === "pose"
-      ? "Two people needed, each with a visible face and raised wrist"
-      : state.playMode === "pvp"
-        ? "One face and one raised hand beside it needed on each side"
-      : "Raise a hand beside your face to continue";
-    if (state.faceTrackingError) {
-      key = "face-error";
-      message = "Face scanner unavailable. Change setup and try again.";
-    } else if (!state.faceTrackingReady) {
-      key = "face-loading";
-      message = "Starting face scanner…";
-    } else if (missingFaces > 0) {
-      key = `missing-faces-${missingFaces}`;
-      message = missingFaces === 2 ? "Keep both faces in view" : state.playMode === "pvp" ? "One more face needed" : "Look at the camera";
-    }
-    setRegistrationStatus(key, message, false);
+  const playerCount = activePlayerCount();
+  const selected = selectRegistrationFaces(faces, playerCount, now);
+  if (selected) state.playerFaceSlots = selected.map(({ slot }) => slot);
+  if (!state.faceTrackingReady || !selected) {
+    resetFaceRegistration();
+    const visibleCount = faces.filter((face) => face && face.interactive !== false
+      && now - face.lastSeen <= FACE_FRESH_MS).length;
+    setRegistrationStatus(
+      state.faceTrackingError ? "face-error" : !state.faceTrackingReady ? "face-loading" : `looking-for-faces-${visibleCount}`,
+      state.faceTrackingError ? "Face scanner unavailable. Please try again."
+        : !state.faceTrackingReady ? "Starting face scanner…"
+          : playerCount === 2 ? `Step 1: show two separated faces (${visibleCount}/2 visible)`
+            : "Step 1: look toward the camera until your face appears",
+      false,
+    );
     return;
   }
 
-  state.registrationReadySince = getStableRecoveryStart(state.registrationReadySince, true, now);
-  if (now - state.registrationReadySince < REGISTRATION_STABLE_MS) {
-    setRegistrationStatus("hold-steady", "Faces and hands found — hold for a moment…", false);
+  if (state.registrationFaceLock
+    && !sameFaceCandidates(state.registrationFaceLock, selected, state.trackerKind)) {
+    resetFaceRegistration();
+  }
+  if (!state.registrationFaceLock) {
+    if (!state.registrationFaceCandidate
+      || !sameFaceCandidates(state.registrationFaceCandidate.faces, selected, state.trackerKind)) {
+      state.registrationFaceCandidate = { faces: snapshotFaces(selected, state.trackerKind), since: now };
+    }
+    if (now - state.registrationFaceCandidate.since < FACE_LOCK_MS) {
+      setRegistrationStatus("holding-faces", "Step 1: faces found — hold still to lock them…", false);
+      return;
+    }
+    state.registrationFaceLock = snapshotFaces(selected, state.trackerKind);
+    state.registrationHandCandidates = [null, null];
+  }
+
+  const matches = associateHandsToFaces(hands, selected, state.trackerKind, now);
+  state.registrationMatches = matches;
+  const allHandsFound = matches.length === playerCount && matches.every(Boolean);
+  state.registrationHandCandidates = state.registrationHandCandidates.map((candidate, index) => {
+    const identity = handIdentity(matches[index], state.trackerKind);
+    return identity ? candidate?.identity === identity ? candidate : { identity, since: now } : null;
+  });
+  if (!allHandsFound) {
+    setRegistrationStatus("looking-for-hands", "Step 2: faces locked — raise one hand beside each face", false);
+    return;
+  }
+  if (state.registrationHandCandidates.some((candidate) => now - candidate.since < HAND_LOCK_MS)) {
+    setRegistrationStatus("holding-hands", "Step 2: hands matched — hold them there briefly…", false);
     return;
   }
 
   setRegistrationStatus(
     state.playMode === "pvp" ? "ready-pvp" : "ready-solo",
-    state.playMode === "pvp" ? "Both players ready" : "Face and hand ready",
+    state.playMode === "pvp" ? "Both faces and hands locked" : "Face and hand locked",
     true,
   );
   if (state.phase === "registering") {
-    lockPlayerSlots(fresh.faces);
+    lockPlayerSlots(selected, matches);
     startRegistrationCountdown();
   }
 }
@@ -689,7 +698,7 @@ function startSession(inputMode) {
   showPanel(elements.play, "playing");
   elements.video.hidden = inputMode !== "camera";
   elements.trackingStatus.hidden = inputMode !== "camera";
-  elements.trackingDiagnostics.hidden = inputMode !== "camera" || state.trackerKind !== "pose";
+  elements.trackingDiagnostics.hidden = inputMode !== "camera" || state.trackerKind !== "hybrid";
   elements.board.classList.toggle("keyboard-mode", inputMode === "keyboard");
   elements.board.classList.toggle("pvp-mode", state.playMode === "pvp");
   elements.play.classList.toggle("pvp-mode", state.playMode === "pvp");
@@ -699,8 +708,8 @@ function startSession(inputMode) {
   updateTrackingStatus(state.players.filter(Boolean).length);
   elements.inputHint.textContent = inputMode === "camera"
     ? state.playMode === "pvp"
-      ? state.trackerKind === "pose"
-        ? "Stay on your side of the camera. Raise one wrist to control your lane, catch shapes and avoid hazards."
+      ? state.trackerKind === "hybrid"
+        ? "Stay on your side of the camera. Keep your registered hand visible to control your lane."
         : "Stay on your side of the camera. Raise one hand to control your lane, catch shapes and avoid hazards."
       : "Your palms control the circles. Catch garden shapes and avoid hazards."
     : "Use the arrow keys or W A S D. Catch garden shapes and avoid hazards.";

@@ -12,11 +12,17 @@ let lastFaceDetectionAt = -Infinity;
 let backend = "CPU";
 const FACE_INTERVAL_MS = 1000 / 8;
 
-function getVisionFileset() {
+async function getVisionFileset(task) {
   if (!visionFilesetPromise) {
     visionFilesetPromise = FilesetResolver.forVisionTasks(wasmBaseUrl, true);
   }
-  return visionFilesetPromise;
+  const fileset = await visionFilesetPromise;
+  // MediaPipe clears the global ModuleFactory after creating a task. Give the
+  // face and hand task loaders distinct module URLs so the second import runs.
+  return {
+    ...fileset,
+    wasmLoaderPath: `${fileset.wasmLoaderPath}?task=${task}`,
+  };
 }
 
 async function fetchModel(url, label) {
@@ -27,9 +33,8 @@ async function fetchModel(url, label) {
 
 async function createLandmarker(wasmBaseUrl, modelUrl) {
   const modelBuffer = await fetchModel(modelUrl, "Hand tracking");
-  const vision = await getVisionFileset();
-
   async function create(delegate) {
+    const vision = await getVisionFileset(`hand-${delegate.toLowerCase()}`);
     return HandLandmarker.createFromOptions(vision, {
       baseOptions: { modelAssetBuffer: modelBuffer, delegate },
       runningMode: "VIDEO",
@@ -55,7 +60,7 @@ async function ensureFaceDetector() {
   if (faceDetectorInitialization) return faceDetectorInitialization;
   faceDetectorInitialization = (async () => {
     const modelBuffer = await fetchModel(faceModelUrl, "Face tracking");
-    const vision = await getVisionFileset();
+    const vision = await getVisionFileset("face");
     faceDetector = await FaceDetector.createFromOptions(vision, {
       baseOptions: { modelAssetBuffer: modelBuffer, delegate: "CPU" },
       runningMode: "VIDEO",
@@ -95,10 +100,9 @@ self.addEventListener("message", async (event) => {
       faceModelUrl = message.faceModelUrl;
       faceTrackingEnabled = Boolean(message.faceTrackingEnabled);
       visionFilesetPromise = null;
-      const faceInitialization = faceTrackingEnabled ? ensureFaceDetector() : Promise.resolve(null);
+      if (faceTrackingEnabled) await ensureFaceDetector();
       await createLandmarker(message.wasmBaseUrl, message.modelUrl);
       self.postMessage({ type: "READY", backend });
-      void faceInitialization;
     } catch (error) {
       self.postMessage({ type: "INIT_ERROR", error: error?.message || "Hand tracker could not load." });
     }
@@ -116,6 +120,7 @@ self.addEventListener("message", async (event) => {
   if (message.type === "DETECT") {
     if (!landmarker) {
       message.bitmap.close();
+      message.faceBitmap?.close();
       self.postMessage({ type: "DETECT_ERROR", generation: message.generation, error: "Hand tracker is not ready." });
       return;
     }
@@ -128,16 +133,19 @@ self.addEventListener("message", async (event) => {
         const handedness = result.handedness[index]?.[0];
         return {
           ...palm,
+          wristX: landmarks[0]?.x,
+          wristY: landmarks[0]?.y,
           label: handedness?.categoryName || `hand-${index}`,
           confidence: handedness?.score ?? 1,
         };
       }).filter((hand) => Number.isFinite(hand.x) && Number.isFinite(hand.y));
       let faces;
       let faceInferenceMs = 0;
-      if (faceTrackingEnabled && faceDetector && message.timestampMs - lastFaceDetectionAt >= FACE_INTERVAL_MS) {
+      if (faceTrackingEnabled && faceDetector && message.faceBitmap
+        && message.timestampMs - lastFaceDetectionAt >= FACE_INTERVAL_MS) {
         const faceStartedAt = performance.now();
-        const faceResult = faceDetector.detectForVideo(message.bitmap, message.timestampMs);
-        faces = normalizeFaceDetections(faceResult, message.bitmap);
+        const faceResult = faceDetector.detectForVideo(message.faceBitmap, message.timestampMs);
+        faces = normalizeFaceDetections(faceResult, message.faceBitmap);
         faceInferenceMs = performance.now() - faceStartedAt;
         lastFaceDetectionAt = message.timestampMs;
       }
@@ -155,6 +163,7 @@ self.addEventListener("message", async (event) => {
       self.postMessage({ type: "DETECT_ERROR", generation: message.generation, error: error?.message || "Hand detection failed." });
     } finally {
       message.bitmap.close();
+      message.faceBitmap?.close();
     }
   }
 

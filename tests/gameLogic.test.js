@@ -38,6 +38,15 @@ import {
   updateHandSlots,
 } from "../src/handTrackingMath.js";
 import { normalizePosePlayers } from "../src/poseTrackingMath.js";
+import { matchPoseHands } from "../src/hybridTrackingMath.js";
+import {
+  associateHandsToFaces,
+  getLockedHand,
+  handIdentity,
+  sameFaceCandidates,
+  selectRegistrationFaces,
+  snapshotFaces,
+} from "../src/registrationTracking.js";
 
 describe("game helpers", () => {
   it("formats the session countdown", () => {
@@ -320,5 +329,119 @@ describe("pose tracking helpers", () => {
     expect(result.faces[0].cameraX).toBeCloseTo(0.7);
     expect(result.hands[0].x).toBeCloseTo(0.45);
     expect(result.hands[0].lastSeen).toBe(1000);
+    expect(result.wrists.filter((wrist) => wrist.personId === 1)
+      .map((wrist) => wrist.side)).toEqual(["left", "right"]);
+  });
+});
+
+describe("hybrid PvP hand ownership", () => {
+  const wrist = (personId, side, x, y = 0.4) =>
+    ({ personId, side, x, y, confidence: 0.9, lastSeen: 1000, interactive: true });
+  const hand = (x, y = 0.4) =>
+    ({ x, y, wristX: x, wristY: y, confidence: 0.9, lastSeen: 1000, interactive: true });
+
+  it("uses hand landmarks for cursor position while pose assigns each person", () => {
+    const result = matchPoseHands(
+      [wrist(1, "left", 0.24), wrist(2, "right", 0.76)],
+      [hand(0.27), hand(0.73)], [], 1010,
+    );
+    expect(result).toMatchObject([
+      { personId: 1, side: "left", x: 0.27, handSlot: 0 },
+      { personId: 2, side: "right", x: 0.73, handSlot: 1 },
+    ]);
+  });
+
+  it("does not switch to the other hand when the registered side is missing", () => {
+    const result = matchPoseHands(
+      [wrist(1, "left", 0.2), wrist(1, "right", 0.4)],
+      [hand(0.4)], [{ personId: 1, side: "left" }], 1010,
+    );
+    expect(result).toEqual([]);
+  });
+
+  it("does not assign the same detected hand to two people", () => {
+    const result = matchPoseHands(
+      [wrist(1, "left", 0.45), wrist(2, "right", 0.55)],
+      [hand(0.47)], [], 1010,
+    );
+    expect(result).toHaveLength(1);
+    expect(result[0].personId).toBe(1);
+  });
+
+  it("rejects stale or distant associations instead of jumping cursors", () => {
+    expect(matchPoseHands([wrist(1, "left", 0.2)], [hand(0.8)], [], 1010)).toEqual([]);
+    expect(matchPoseHands([wrist(1, "left", 0.2)], [hand(0.2)], [], 1400)).toEqual([]);
+  });
+
+  it("does not guess an owner when a hand is equally close to two wrists", () => {
+    expect(matchPoseHands(
+      [wrist(1, "left", 0.45), wrist(2, "right", 0.55)], [hand(0.5)], [], 1010,
+    )).toEqual([]);
+  });
+});
+
+describe("face-first registration", () => {
+  const face = (x, personId) => ({
+    x, y: 0.28, width: 0.15, height: 0.18,
+    personId, lastSeen: 1000, interactive: true,
+  });
+  const hand = (x, y = 0.43, personId) => ({
+    x, y, personId, side: "left", lastSeen: 1000, interactive: true,
+  });
+
+  it("waits for the correct number of fresh, separated faces", () => {
+    expect(selectRegistrationFaces([face(0.28, 1)], 2, 1010)).toBeNull();
+    expect(selectRegistrationFaces([face(0.42, 1), face(0.55, 2)], 2, 1010)).toBeNull();
+    expect(selectRegistrationFaces([face(0.72, 2), face(0.28, 1)], 2, 1010)
+      .map(({ face: detected }) => detected.personId)).toEqual([1, 2]);
+    expect(selectRegistrationFaces([face(0.28, 1)], 1, 1400)).toBeNull();
+  });
+
+  it("keeps the face stage stable before accepting a hand", () => {
+    const selected = selectRegistrationFaces([face(0.28, 1)], 1, 1010);
+    const snapshot = snapshotFaces(selected, "hybrid");
+    expect(sameFaceCandidates(snapshot, selected, "hybrid")).toBe(true);
+    expect(sameFaceCandidates(snapshot, [{ face: face(0.7, 1), slot: 0 }], "hybrid")).toBe(false);
+    expect(sameFaceCandidates(snapshot, [{ face: face(0.28, 9), slot: 0 }], "hybrid")).toBe(false);
+  });
+
+  it("associates nearby hands to the correct face without using detector order", () => {
+    const selected = selectRegistrationFaces([face(0.72, 2), face(0.28, 1)], 2, 1010);
+    const matches = associateHandsToFaces(
+      [hand(0.79, 0.43), hand(0.20, 0.43)], selected, "hand", 1010,
+    );
+    expect(matches.map((match) => match?.registrationSlot)).toEqual([1, 0]);
+    expect(handIdentity(matches[0], "hand")).toBe("slot:1");
+  });
+
+  it("registers one nearby hand in solo mode and rejects a stale hand", () => {
+    const selected = selectRegistrationFaces([face(0.5, 1)], 1, 1010);
+    expect(associateHandsToFaces([hand(0.66)], selected, "hand", 1010)[0]).toMatchObject({
+      registrationSlot: 0, x: 0.66,
+    });
+    expect(associateHandsToFaces([hand(0.66)], selected, "hand", 1250)).toEqual([null]);
+  });
+
+  it("never creates an interactive cursor from a missing locked hand slot", () => {
+    expect(getLockedHand([], 0)).toBeNull();
+    expect(getLockedHand([null], 0)).toBeNull();
+    expect(getLockedHand([hand(0.2)], null)).toBeNull();
+    expect(getLockedHand([hand(0.7)], 0, 0)).toBeNull();
+    expect(getLockedHand([hand(0.7)], 0, 1)?.x).toBe(0.7);
+  });
+
+  it("does not assign both hands to one player or guess between close faces", () => {
+    const selected = selectRegistrationFaces([face(0.35, 1), face(0.65, 2)], 2, 1010);
+    expect(associateHandsToFaces([hand(0.2), hand(0.3)], selected, "hand", 1010)[1]).toBeNull();
+    expect(associateHandsToFaces([hand(0.48)], selected, "hand", 1010)).toEqual([null, null]);
+  });
+
+  it("requires the beta hand to belong to the matching pose", () => {
+    const selected = selectRegistrationFaces([face(0.25, 1), face(0.75, 2)], 2, 1010);
+    const matches = associateHandsToFaces(
+      [hand(0.3, 0.43, 2), hand(0.7, 0.43, 2)], selected, "hybrid", 1010,
+    );
+    expect(matches[0]).toBeNull();
+    expect(matches[1]?.personId).toBe(2);
   });
 });
