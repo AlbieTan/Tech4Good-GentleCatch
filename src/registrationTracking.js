@@ -49,14 +49,21 @@ export function associateHandsToFaces(hands = [], selectedFaces = [], trackerKin
   const candidates = [];
 
   hands.forEach((hand, slot) => {
-    if (!isFreshDetection(hand, now, HAND_FRESH_MS) || hand.y > 0.82) return;
+    if (!isFreshDetection(hand, now, trackerKind === "hybrid" ? 350 : HAND_FRESH_MS)
+      || hand.y > 0.82) return;
+    if (trackerKind === "hybrid"
+      && ((hand.confidence ?? 0) < 0.55
+        || !Number.isFinite(hand.shoulderY)
+        || hand.y > hand.shoulderY + 0.12)) return;
     const distances = faces.map((face) => handFaceDistance(hand, face));
     selectedFaces.forEach(({ face }, ownerIndex) => {
       if (trackerKind === "hybrid" && hand.personId !== face.personId) return;
-      if (boundary !== null && (ownerIndex === 0 ? hand.x >= boundary : hand.x < boundary)) return;
+      if (trackerKind !== "hybrid" && boundary !== null
+        && (ownerIndex === 0 ? hand.x >= boundary : hand.x < boundary)) return;
       const dx = Math.abs(hand.x - face.x);
       const dy = hand.y - face.y;
-      if (dx > HAND_FACE_X_LIMIT || dy < -0.22 || dy > HAND_FACE_Y_LIMIT) return;
+      if (dx > (trackerKind === "hybrid" ? 0.46 : HAND_FACE_X_LIMIT)
+        || dy < -0.22 || dy > (trackerKind === "hybrid" ? 0.52 : HAND_FACE_Y_LIMIT)) return;
       if (dx <= (face.width ?? 0.18) / 2 + 0.015
         && Math.abs(dy) <= (face.height ?? 0.24) / 2 + 0.015) return;
       if (trackerKind !== "hybrid" && distances.some((distance, index) =>
@@ -81,7 +88,7 @@ export function associateHandsToFaces(hands = [], selectedFaces = [], trackerKin
 export function handIdentity(hand, trackerKind) {
   if (!hand) return null;
   return trackerKind === "hybrid"
-    ? `pose:${hand.personId}:${hand.side}:${hand.registrationSlot}`
+    ? `pose:${hand.personId}:${hand.side}`
     : `slot:${hand.registrationSlot}`;
 }
 

@@ -231,7 +231,7 @@ function updateRecoveryOverlay(hands = [], faces = [], now = performance.now()) 
   elements.recoveryMessage.textContent = facesReady && handsReady
     ? "Keep both players in view while we reconnect…"
     : state.trackerKind === "hybrid"
-      ? "Each player: stay on your side and raise your registered hand."
+      ? "Each player: show your face and shoulders, then raise your registered arm until its wrist appears."
       : "Each player: look at the camera and raise one hand beside your face, on your side.";
   if (playerCount === 2) {
     elements.recoveryFaceCheck.textContent = `${selected?.[0] && matches[0] ? "✓" : "○"} Player 1`;
@@ -366,7 +366,7 @@ const handleTrackerStatus = (status) => {
   }
   if (status.type === "tracking") {
     const message = state.trackerKind === "hybrid"
-      ? `Bodies ${status.faceCount} · Hands ${status.count} · Matched ${status.matchedCount} · Pose ${status.fps ?? 0} FPS · IDs ${status.personIds?.join(", ") || "—"}`
+      ? `Bodies ${status.bodyCount ?? 0} · Wrists ${status.count ?? 0} · Pose ${status.fps ?? 0} FPS / ${Math.round(status.inferenceMs ?? 0)} ms · ${state.recoveryActive || state.phase === "registering" ? `Faces ${status.rawFaceCount ?? 0} · Linked ${status.faceCount ?? 0} · Face ${Math.round(status.faceInferenceMs ?? 0)} ms` : "Face check off"} · IDs ${status.personIds?.join(", ") || "—"}`
       : `Faces ${status.faceCount ?? 0} · Hands ${status.count ?? 0} · ${status.backend ?? "Local"}`;
     elements.registrationDiagnostics.textContent = message;
     elements.trackingDiagnostics.textContent = message;
@@ -468,7 +468,7 @@ function updateFaceLockProgress(faces = [], hands = [], now = performance.now())
     const handFound = faceLocked && Boolean(state.registrationMatches[index]);
     const locked = faceLocked && handFound;
     row.classList.toggle("is-locked", locked);
-    row.querySelector("small").textContent = `Face ${faceLocked ? "✓" : faceFound ? "◌" : "○"} · Hand ${handFound ? "✓" : "○"}`;
+    row.querySelector("small").textContent = `Face ${faceLocked ? "✓" : faceFound ? "◌" : "○"} · ${state.trackerKind === "hybrid" ? "Wrist" : "Hand"} ${handFound ? "✓" : "○"}`;
     row.querySelector("i").textContent = locked ? "✓" : "○";
   });
 }
@@ -481,7 +481,7 @@ function setRegistrationCopy() {
   elements.registration.classList.toggle("pvp-mode", isPvp);
   elements.registrationPlural.textContent = isPvp ? "s" : "";
   elements.registrationInstruction.textContent = isHybrid
-    ? "Stand side by side, keep your shoulders visible, and raise one hand each beside your face. Keep that hand visible throughout the round."
+    ? "Stand side by side with faces and shoulders visible. Raise one arm each so the camera can see your wrist, then keep that arm in view during play."
     : isPvp
       ? "Stand side by side and raise one hand each beside your face. Keep your hand on your own side of the camera view."
     : "Look at the camera and raise one hand beside your face. Keep your face and hand visible for the full countdown.";
@@ -491,7 +491,7 @@ function setRegistrationCopy() {
   updateFaceLockProgress([]);
   setRegistrationStatus(
     isPvp ? "waiting-pvp" : "waiting-solo",
-    isHybrid ? "Looking for two bodies and raised hands…" : isPvp ? "Looking for two players…" : "Looking for your face and hand…",
+    isHybrid ? "Looking for two faces, bodies and wrists…" : isPvp ? "Looking for two players…" : "Looking for your face and hand…",
     false,
   );
 }
@@ -601,17 +601,21 @@ function handleRegistration(hands, faces, now) {
     return identity ? candidate?.identity === identity ? candidate : { identity, since: now } : null;
   });
   if (!allHandsFound) {
-    setRegistrationStatus("looking-for-hands", "Step 2: faces locked — raise one hand beside each face", false);
+    setRegistrationStatus("looking-for-hands", state.trackerKind === "hybrid"
+      ? "Step 2: faces linked — raise one arm each until both wrists appear"
+      : "Step 2: faces locked — raise one hand beside each face", false);
     return;
   }
   if (state.registrationHandCandidates.some((candidate) => now - candidate.since < HAND_LOCK_MS)) {
-    setRegistrationStatus("holding-hands", "Step 2: hands matched — hold them there briefly…", false);
+    setRegistrationStatus("holding-hands", state.trackerKind === "hybrid"
+      ? "Step 2: wrists linked — hold your arms there briefly…"
+      : "Step 2: hands matched — hold them there briefly…", false);
     return;
   }
 
   setRegistrationStatus(
     state.playMode === "pvp" ? "ready-pvp" : "ready-solo",
-    state.playMode === "pvp" ? "Both faces and hands locked" : "Face and hand locked",
+    state.playMode === "pvp" ? `Both faces and ${state.trackerKind === "hybrid" ? "wrists" : "hands"} locked` : "Face and hand locked",
     true,
   );
   if (state.phase === "registering") {
@@ -709,7 +713,7 @@ function startSession(inputMode) {
   elements.inputHint.textContent = inputMode === "camera"
     ? state.playMode === "pvp"
       ? state.trackerKind === "hybrid"
-        ? "Stay on your side of the camera. Keep your registered hand visible to control your lane."
+        ? "Stay on your side of the camera. Your visible wrist controls your lane."
         : "Stay on your side of the camera. Raise one hand to control your lane, catch shapes and avoid hazards."
       : "Your palms control the circles. Catch garden shapes and avoid hazards."
     : "Use the arrow keys or W A S D. Catch garden shapes and avoid hazards.";
@@ -805,6 +809,15 @@ function gameLoop(now) {
   }
 
   updateKeyboard(deltaSeconds);
+  if (state.inputMode === "camera") {
+    state.players = state.players.map((player) => player && now - player.lastSeen > 550
+      ? { ...player, interactive: false } : player);
+    monitorGameplayPresence(now);
+    if (state.recoveryActive) {
+      state.animationId = requestAnimationFrame(gameLoop);
+      return;
+    }
+  }
   spawnObject(now);
   updateObjects(deltaSeconds, now);
   updateStats();
@@ -931,18 +944,22 @@ function streakLabel(stats) {
 
 function updateStats() {
   const config = getPaceConfig(state.pace);
-  elements.playerOneScore.textContent = state.playerStats[0].score;
-  elements.playerOneStreak.textContent = streakLabel(state.playerStats[0]);
-  elements.playerTwoScore.textContent = state.playerStats[1].score;
-  elements.playerTwoStreak.textContent = streakLabel(state.playerStats[1]);
-  elements.laneOneScore.textContent = state.playerStats[0].score;
-  elements.laneOneStreak.textContent = streakLabel(state.playerStats[0]);
-  elements.laneTwoScore.textContent = state.playerStats[1].score;
-  elements.laneTwoStreak.textContent = streakLabel(state.playerStats[1]);
-  elements.caught.textContent = state.caught;
-  elements.missed.textContent = state.missed;
-  elements.missLimit.textContent = config.missLimit * (state.playMode === "pvp" ? 2 : 1);
-  elements.time.textContent = formatTime(state.remainingSeconds);
+  const setText = (element, value) => {
+    const next = String(value);
+    if (element.textContent !== next) element.textContent = next;
+  };
+  setText(elements.playerOneScore, state.playerStats[0].score);
+  setText(elements.playerOneStreak, streakLabel(state.playerStats[0]));
+  setText(elements.playerTwoScore, state.playerStats[1].score);
+  setText(elements.playerTwoStreak, streakLabel(state.playerStats[1]));
+  setText(elements.laneOneScore, state.playerStats[0].score);
+  setText(elements.laneOneStreak, streakLabel(state.playerStats[0]));
+  setText(elements.laneTwoScore, state.playerStats[1].score);
+  setText(elements.laneTwoStreak, streakLabel(state.playerStats[1]));
+  setText(elements.caught, state.caught);
+  setText(elements.missed, state.missed);
+  setText(elements.missLimit, config.missLimit * (state.playMode === "pvp" ? 2 : 1));
+  setText(elements.time, formatTime(state.remainingSeconds));
 }
 
 function togglePause() {

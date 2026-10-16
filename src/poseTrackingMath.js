@@ -40,10 +40,12 @@ export function normalizePosePlayers(poses = [], width, height, timestamp) {
     for (const side of ["left", "right"]) {
       const wrist = keypoint(pose, `${side}_wrist`);
       if (usable(wrist)) {
+        const shoulder = keypoint(pose, `${side}_shoulder`);
         trackedWrists.push({
           ...mirrored(wrist, width, height),
           personId,
           side,
+          shoulderY: usable(shoulder) ? mirrored(shoulder, width, height).y : null,
           confidence: wrist.score,
           lastSeen: timestamp,
           interactive: true,
@@ -76,4 +78,39 @@ export function normalizePosePlayers(poses = [], width, height, timestamp) {
   });
 
   return { hands, faces, wrists: trackedWrists };
+}
+
+// A detected face confirms presence; MoveNet supplies the corresponding
+// body's temporary person ID and shoulder-centred camera position.
+export function matchDetectedFacesToPoses(detectedFaces = [], poseFaces = [], now = performance.now()) {
+  const freshFaces = detectedFaces.filter((face) => face?.interactive !== false
+    && Number.isFinite(face?.lastSeen) && now - face.lastSeen <= 350);
+  const freshPoses = poseFaces.filter((face) => face?.interactive !== false
+    && Number.isFinite(face?.lastSeen) && now - face.lastSeen <= 350);
+  const candidates = [];
+  freshFaces.forEach((face, faceIndex) => {
+    const distances = freshPoses.map((pose) => Math.hypot(face.x - pose.x, face.y - pose.y));
+    const ordered = [...distances].sort((a, b) => a - b);
+    if (ordered[0] == null || ordered[0] > 0.22
+      || (ordered[1] != null && ordered[1] - ordered[0] < 0.05)) return;
+    freshPoses.forEach((pose, poseIndex) => {
+      if (distances[poseIndex] <= 0.22) candidates.push({ face, pose, faceIndex, poseIndex, distance: distances[poseIndex] });
+    });
+  });
+  candidates.sort((a, b) => a.distance - b.distance);
+  const usedFaces = new Set();
+  const usedPoses = new Set();
+  const matched = [];
+  for (const candidate of candidates) {
+    if (usedFaces.has(candidate.faceIndex) || usedPoses.has(candidate.poseIndex)) continue;
+    usedFaces.add(candidate.faceIndex);
+    usedPoses.add(candidate.poseIndex);
+    matched.push({
+      ...candidate.face,
+      personId: candidate.pose.personId,
+      cameraX: candidate.pose.cameraX,
+      lastSeen: Math.min(candidate.face.lastSeen, candidate.pose.lastSeen),
+    });
+  }
+  return matched;
 }
