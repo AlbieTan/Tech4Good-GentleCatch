@@ -8,10 +8,10 @@ import {
 
 const TRACKING_WIDTH = 384;
 const TRACKING_HEIGHT = 216;
-const FACE_TRACKING_WIDTH = 640;
-const FACE_TRACKING_HEIGHT = 360;
+const FACE_TRACKING_WIDTH = 480;
+const FACE_TRACKING_HEIGHT = 270;
 const FACE_FRAME_INTERVAL_MS = 1000 / 8;
-const TARGET_FRAME_INTERVAL_MS = 1000 / 24;
+const TARGET_FRAME_INTERVAL_MS = 1000 / 30;
 
 export class HandTracker {
   constructor(video, onHands, onStatus) {
@@ -31,6 +31,8 @@ export class HandTracker {
     this.lastCaptureTime = -Infinity;
     this.lastFaceCaptureTime = -Infinity;
     this.lastVideoTime = -1;
+    this.lastResultTime = 0;
+    this.trackingFps = 0;
     this.slots = Array(MAX_HANDS).fill(null);
     this.presentedSlots = Array(MAX_HANDS).fill(null);
     this.faceSlots = [null, null];
@@ -88,6 +90,11 @@ export class HandTracker {
       if (message.generation !== this.generation) return;
       this.inFlight = false;
       const now = performance.now();
+      if (this.lastResultTime > 0) {
+        const fps = 1000 / Math.max(1, now - this.lastResultTime);
+        this.trackingFps = this.trackingFps ? this.trackingFps * 0.75 + fps * 0.25 : fps;
+      }
+      this.lastResultTime = now;
       this.slots = updateHandSlots(this.slots, message.hands, now);
       if (message.faces) this.faceSlots = updateFaceSlots(this.faceSlots, message.faces, now);
       const visibleHands = this.slots.filter((slot) => slot?.visible);
@@ -97,6 +104,8 @@ export class HandTracker {
         inferenceMs: message.inferenceMs,
         faceInferenceMs: message.faceInferenceMs,
         faceCount: this.faceSlots.filter((slot) => slot?.visible).length,
+        fps: Math.round(this.trackingFps),
+        frameAgeMs: Math.max(0, now - message.timestampMs),
         backend: message.backend,
       });
       return;
@@ -113,6 +122,8 @@ export class HandTracker {
     this.running = true;
     this.inFlight = false;
     this.lastVideoTime = -1;
+    this.lastResultTime = 0;
+    this.trackingFps = 0;
     this.slots = Array(MAX_HANDS).fill(null);
     this.presentedSlots = Array(MAX_HANDS).fill(null);
     this.faceSlots = [null, null];
@@ -164,6 +175,8 @@ export class HandTracker {
     this.slots = Array(MAX_HANDS).fill(null);
     this.presentedSlots = Array(MAX_HANDS).fill(null);
     this.faceSlots = [null, null];
+    this.lastResultTime = 0;
+    this.trackingFps = 0;
     this.onHands([], []);
   }
 

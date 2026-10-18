@@ -1,10 +1,10 @@
 # Gentle Catch on a Raspberry Pi kiosk
 
-This is a setup recipe, not a claim that the current Raspberry Pi has been configured or performance-tested. Use Raspberry Pi OS (64-bit) with a desktop, a display and a camera. A Pi 5 is strongly preferred for the two-person pose model; measure its actual pose FPS before use at the centre.
+This is a setup recipe, not a claim that the current Raspberry Pi has been configured or performance-tested. Use Raspberry Pi OS (64-bit) with a desktop, a display and a camera. A Pi 5 is strongly preferred for two-person play; measure its actual palm-tracking FPS before use at the centre.
 
 ## Camera-only operation
 
-Open `http://127.0.0.1:8000/` in Chromium on the Pi. The camera gesture menu follows the eight-second warning. One person raises a hand for Solo; two people, side by side, each raise a hand for PvP. For difficulty and round time, either player raises one hand and holds it left, above or right of their face. Lower hands briefly between steps. Registration then checks face points and wrists before a three-second countdown. After a round, results remain visible for eight seconds and the gesture menu returns without reloading a healthy camera or model. A prolonged missing player or a sustained extra detected body ends the current round rather than assigning its controls to a newcomer. The face point is **not biometric identity verification**.
+Open `http://127.0.0.1:8000/` in Chromium on the Pi. The camera gesture menu follows the eight-second warning. One person raises a hand for Solo; two people, side by side, each raise a hand for PvP. For difficulty and round time, either player raises one hand and holds it left, above or right of their face. Lower hands out of view briefly between steps. Registration then checks faces and nearby palms before a three-second countdown. After a round, results remain visible for eight seconds and the gesture menu returns without reloading a healthy camera or model. A prolonged missing player ends the current round rather than assigning its controls to a newcomer. This is positional continuity, **not biometric identity verification**; an extra person is not reliably detectable while face checks are off during play.
 
 The camera gesture menu selects pace and duration each round. Staff can use the footer link or `?mode=manual` for mouse-driven setup and troubleshooting. During a round, stepping out of view ends the round after the absence grace period; a mouse is not needed to get back to the menu.
 

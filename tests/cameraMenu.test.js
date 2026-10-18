@@ -60,4 +60,13 @@ describe("camera-only menu", () => {
     expect(advanceCameraMenuRelease(release.since, false, 1450).armed).toBe(true);
     expect(advanceCameraMenuRelease(release.since, true, 1500).armed).toBe(false);
   });
+
+  it("supports the palm tracker without pose-only shoulder or person IDs", () => {
+    const now = 1000;
+    const palm = (x) => ({ x, y: 0.43, confidence: 0.9, interactive: true, lastSeen: now });
+    const faces = [face(0.28, 1, now), face(0.72, 2, now)];
+    expect(getCameraMenuChoice([palm(0.17), palm(0.84)], faces, now, "hand")).toBe("pvp");
+    expect(getCameraSettingChoice([palm(0.42)], faces, 2, now, "hand")).toBe("middle");
+    expect(hasRaisedMenuWrist([palm(0.42)], now, "hand")).toBe(true);
+  });
 });

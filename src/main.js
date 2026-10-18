@@ -82,7 +82,6 @@ const elements = {
   cameraMenuPositions: [$("#cameraMenuLeft"), $("#cameraMenuMiddle"), $("#cameraMenuRight")],
   cameraMenuMeter: $("#cameraMenuMeter"),
   cameraMenuStatus: $("#cameraMenuStatus"),
-  cameraMenuSummary: $("#cameraMenuSummary"),
   registrationPlural: $("#registrationPlural"),
   registrationInstruction: $("#registrationInstruction"),
   registrationStatus: $("#registrationStatus"),
@@ -184,6 +183,7 @@ const state = {
   cameraMenuStage: "mode",
   cameraMenuArmed: true,
   cameraMenuReleaseSince: null,
+  lastCameraMenuCheck: 0,
   registrationStartedAt: 0,
   keys: new Set(),
   stream: null,
@@ -220,7 +220,9 @@ function selectedValue(name) {
 
 function configureFromSetup() {
   state.playMode = selectedValue("playMode");
-  state.trackerKind = kioskMode || state.playMode === "pvp" && elements.poseTrackerToggle.checked
+  // The kiosk uses palm landmarks in a worker for both modes. Pose-first PvP
+  // remains available from the classic staff menu for comparison.
+  state.trackerKind = !kioskMode && state.playMode === "pvp" && elements.poseTrackerToggle.checked
     ? "hybrid" : "hand";
   state.pace = selectedValue("pace");
   state.durationSeconds = Number(selectedValue("duration"));
@@ -386,9 +388,11 @@ const handleTrackedPlayers = (hands, faces) => {
   if (state.inputMode !== "camera") return;
   if (state.phase === "camera-menu") {
     const now = performance.now();
+    if (now - state.lastCameraMenuCheck < 80) return;
+    state.lastCameraMenuCheck = now;
     if (!state.cameraMenuArmed) {
       const release = advanceCameraMenuRelease(
-        state.cameraMenuReleaseSince, hasRaisedMenuWrist(hands, now), now,
+        state.cameraMenuReleaseSince, hasRaisedMenuWrist(hands, now, state.trackerKind), now,
       );
       state.cameraMenuReleaseSince = release.since;
       if (release.armed) {
@@ -398,8 +402,8 @@ const handleTrackedPlayers = (hands, faces) => {
       return;
     }
     const choice = state.cameraMenuStage === "mode"
-      ? getCameraMenuChoice(hands, faces, now)
-      : getCameraSettingChoice(hands, faces, state.playMode === "pvp" ? 2 : 1, now);
+      ? getCameraMenuChoice(hands, faces, now, state.trackerKind)
+      : getCameraSettingChoice(hands, faces, state.playMode === "pvp" ? 2 : 1, now, state.trackerKind);
     const menu = advanceCameraMenu(state.cameraMenuCandidate, choice, now);
     state.cameraMenuCandidate = menu.candidate;
     elements.cameraMenuSolo.classList.toggle("is-active", state.cameraMenuStage === "mode" && choice === "solo");
@@ -410,7 +414,7 @@ const handleTrackedPlayers = (hands, faces) => {
     elements.cameraMenuMeter.style.width = `${Math.round(menu.progress * 100)}%`;
     elements.cameraMenuStatus.textContent = !choice
       ? state.cameraMenuStage === "mode" ? "Waiting for one or two players with raised hands…"
-        : "Keep only one raised hand visible beside a player's face."
+        : "Show one hand beside a face."
       : state.cameraMenuStage === "mode"
         ? choice === "pvp" ? "Two players found — keep both hands raised…" : "One player found — keep your hand raised…"
         : `${state.cameraMenuStage === "pace"
@@ -426,12 +430,12 @@ const handleTrackedPlayers = (hands, faces) => {
   }
   state.faces = faces;
   if (state.phase === "registering") {
-    state.registrationHands = hands;
     const now = performance.now();
-    if (now - state.lastRegistrationCheck >= 80) {
-      state.lastRegistrationCheck = now;
-      handleRegistration(hands, faces, now);
-    }
+    if (now - state.lastRegistrationCheck < 80) return;
+    state.lastRegistrationCheck = now;
+    state.registrationHands = hands;
+    handleRegistration(hands, faces, now);
+    if (state.phase === "camera-menu") return;
     state.players = registrationPlayers();
     renderCursors(elements.registrationCursors);
     renderFaceAnchors(elements.registrationFaces);
@@ -521,7 +525,7 @@ const handleTrackerStatus = (status) => {
     state.lastDiagnosticsAt = now;
     const message = state.trackerKind === "hybrid"
       ? `Bodies ${status.bodyCount ?? 0} · Wrists ${status.count ?? 0} · ${status.cameraWidth ?? 0}×${status.cameraHeight ?? 0} · Video ${status.cameraFps ?? 0} FPS / Pose ${status.fps ?? 0} FPS / ${Math.round(status.inferenceMs ?? 0)} ms / frame age ${Math.round(status.frameAgeMs ?? 0)} ms · ${state.recoveryActive || state.phase === "registering" ? `Face points ${status.faceCount ?? 0}` : "Face check off"} · IDs ${status.personIds?.join(", ") || "—"}`
-      : `Faces ${status.faceCount ?? 0} · Hands ${status.count ?? 0} · ${status.backend ?? "Local"}`;
+      : `Faces ${status.faceCount ?? 0} · Palms ${status.count ?? 0} · ${status.fps ?? 0} FPS / ${Math.round(status.inferenceMs ?? 0)} ms / frame age ${Math.round(status.frameAgeMs ?? 0)} ms · ${status.backend ?? "Local"}`;
     elements.registrationDiagnostics.textContent = message;
     elements.trackingDiagnostics.textContent = message;
   }
@@ -575,8 +579,9 @@ async function requestCamera() {
     video: state.trackerKind === "hybrid"
       ? { width: { ideal: 480, max: 640 }, height: { ideal: 270, max: 360 },
         facingMode: "user", frameRate: { ideal: 24, max: 24 } }
-      : { width: { ideal: 960, max: 1280 }, height: { ideal: 540, max: 720 },
-        facingMode: "user", frameRate: { ideal: 24, max: 30 } },
+      : { width: { ideal: kioskMode ? 640 : 960, max: kioskMode ? 640 : 1280 },
+        height: { ideal: kioskMode ? 360 : 540, max: kioskMode ? 360 : 720 },
+        facingMode: "user", frameRate: { ideal: 30, max: 30 } },
   });
   state.stream = stream;
   elements.registrationStage.prepend(elements.video);
@@ -660,9 +665,15 @@ function showCameraMenu(requireRelease = false) {
   state.cameraMenuArmed = !requireRelease;
   state.cameraMenuReleaseSince = null;
   state.cameraMenuCandidate = null;
+  state.lastCameraMenuCheck = 0;
   resetFaceRegistration();
   state.players = [];
   state.faces = [];
+  state.registrationHands = [];
+  state.playerFaceSlots = [];
+  state.playerHandSlots = [null, null];
+  renderCursors(elements.registrationCursors);
+  renderFaceAnchors(elements.registrationFaces);
   elements.cameraMenuMeter.style.width = "0%";
   renderCameraMenuStage();
   elements.cameraMenu.hidden = false;
@@ -679,10 +690,10 @@ function renderCameraMenuStage() {
   elements.cameraMenuTitle.textContent = mode ? "Choose how to play"
     : stage === "pace" ? "Choose a comfortable pace" : "Choose round time";
   elements.cameraMenuInstruction.textContent = mode
-    ? "For Solo, one person raises a hand. To play together, two people each raise a hand. Hold steady until the choice fills."
+    ? "Raise one hand for Solo, or one hand each for Together. Hold to choose."
     : stage === "pace"
-      ? "One player raises one hand: left of your face for Gentle, above for Steady, or right for Lively. Hold until the bar fills."
-      : "One player raises one hand: left of your face for 20 seconds, above for 30, or right for 60. Hold until the bar fills.";
+      ? "One hand: left for Gentle · middle for Steady · right for Lively."
+      : "One hand: left for 20s · middle for 30s · right for 60s.";
   elements.cameraMenuModeChoices.hidden = !mode;
   elements.cameraMenuSettingChoices.hidden = mode;
   elements.cameraMenuSolo.classList.remove("is-active");
@@ -698,11 +709,7 @@ function renderCameraMenuStage() {
   elements.cameraMenuMeter.style.width = "0%";
   elements.cameraMenuStatus.textContent = state.cameraMenuArmed
     ? mode ? "Waiting for one or two players with raised hands…" : "Raise one hand beside your face to choose."
-    : "Lower all hands briefly before the next choice.";
-  elements.cameraMenuSummary.textContent = mode
-    ? "Choose players → difficulty → time. No mouse is needed."
-    : stage === "pace" ? `${state.playMode === "pvp" ? "2 players" : "Solo"} selected · Choose difficulty next.`
-      : `${state.playMode === "pvp" ? "2 players" : "Solo"} · ${state.pace} pace · Choose time next.`;
+    : "Lower hands out of view briefly before the next choice.";
 }
 
 function advanceCameraMenuStage(selected, now) {

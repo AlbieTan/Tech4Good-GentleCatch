@@ -5,8 +5,8 @@ export const MAX_HANDS = 4;
 const REACQUIRE_MS = 140;
 const TRACKING_GRACE_MS = 140;
 const CURSOR_HOLD_MS = 360;
-const MIN_CUTOFF = 2.5;
-const SPEED_COEFFICIENT = 1.4;
+const MIN_CUTOFF = 4;
+const SPEED_COEFFICIENT = 2;
 const DERIVATIVE_CUTOFF = 3;
 const MAX_PREDICTION_MS = 45;
 const MAX_PREDICTION_DISTANCE = 0.075;
@@ -161,7 +161,7 @@ export function updateHandSlots(previousSlots, detections, timestamp) {
 }
 
 export function presentHandSlots(slots, previousPresented, timestamp, elapsedMs) {
-  const blendAlpha = 1 - Math.exp(-clamp(elapsedMs, 0, 50) / 18);
+  const blendAlpha = 1 - Math.exp(-clamp(elapsedMs, 0, 50) / 12);
 
   return Array.from({ length: MAX_HANDS }, (_, index) => {
     const slot = slots[index];

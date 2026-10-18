@@ -118,25 +118,27 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible { outline: 4
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 1rem;
-  padding: clamp(2rem, 6vw, 5rem);
+  gap: clamp(0.5rem, 1.5vh, 0.9rem);
+  padding: clamp(1.2rem, 4vh, 3rem);
   text-align: center;
+  overflow: hidden;
 }
 .loading-brand-logos { display: flex; align-items: center; justify-content: center; gap: 1rem; }
 .loading-brand-logos img { display: block; width: auto; max-width: min(32vw, 11rem); height: clamp(2.2rem, 6vh, 3.6rem); object-fit: contain; }
 .loading-brand-logos span { width: 1px; height: 2.8rem; background: var(--line); }
-.loading-panel .loading-game-name { color: var(--teal-ink); font-size: clamp(2.5rem, 5vw, 4.5rem); line-height: 1; }
-.loading-panel h2 { max-width: 14ch; }
+.loading-panel .loading-game-name { color: var(--teal-ink); font-size: clamp(2.2rem, 4.5vw, 4rem); line-height: 1; }
+.loading-panel h2 { max-width: 14ch; font-size: clamp(2rem, 4vw, 3.5rem); }
 .loading-mark { display: grid; width: 5rem; height: 5rem; place-items: center; border-radius: 2rem; color: var(--teal-dark); background: var(--teal-soft); font-size: 2.5rem; }
 .loading-lead { max-width: 34rem; margin: 0; color: var(--teal-ink); font-size: clamp(1.2rem, 2.3vw, 1.8rem); font-weight: 800; line-height: 1.4; }
 .loading-status { min-height: 1.5rem; margin: 0; color: var(--teal-dark); font-weight: 700; }
 .loading-countdown { margin: 0; color: var(--pink-dark); font-size: 1.2rem; font-weight: 900; }
 .loading-read-time { margin: 0; color: var(--pink-dark); font-size: 0.9rem; font-weight: 800; }
 .loading-comfort { margin: 0.5rem 0 0; color: var(--muted); }
-.camera-menu { display: grid; align-content: center; gap: 1rem; height: 100%; }
+.camera-menu { display: grid; align-content: center; gap: clamp(0.45rem, 1.3vh, 0.8rem); height: 100%; }
 .camera-menu p { margin: 0; }
-.camera-menu > p:not(.eyebrow) { color: var(--teal-ink); font-size: 1.15rem; line-height: 1.45; }
-.camera-menu > p.camera-menu-brand { color: var(--teal-dark); font-family: "Arial Rounded MT Bold", "Trebuchet MS", sans-serif; font-size: clamp(1.8rem, 3vw, 2.7rem); font-weight: 900; line-height: 1; }
+.camera-menu > p:not(.eyebrow) { color: var(--teal-ink); font-size: 1rem; line-height: 1.35; }
+.camera-menu > p.camera-menu-brand { color: var(--teal-dark); font-family: "Arial Rounded MT Bold", "Trebuchet MS", sans-serif; font-size: clamp(1.8rem, 3vw, 2.7rem); font-weight: 900; line-height: 1; margin-bottom: clamp(0.4rem, 2vh, 1.3rem); }
+.camera-menu h2 { font-size: clamp(2.1rem, 3.5vw, 3.4rem); }
 .camera-menu-choices { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; }
 .camera-menu-choices-three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .camera-menu-choice { display: grid; gap: 0.2rem; padding: 1rem; border: 3px solid #d8e9e6; border-radius: 1.25rem; background: #f5faf9; }
@@ -150,8 +152,11 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible { outline: 4
 .camera-menu-status { min-height: 2.7rem; font-weight: 800; }
 .camera-menu small { color: var(--muted); }
 .registration-panel.camera-menu-mode .registration-copy > :not(.camera-menu) { display: none; }
-.registration-panel.camera-menu-mode .registration-guide span:last-child { display: none; }
+.registration-panel.camera-menu-mode .registration-guide { display: none; }
+.registration-panel.camera-menu-mode .player-cursor,
+.registration-panel.camera-menu-mode .face-anchor { display: none; }
 .registration-panel.camera-kiosk #cancelRegistration { display: none; }
+.registration-panel.camera-kiosk.camera-menu-mode { overflow: hidden; }
 .play-panel.camera-kiosk .toolbar-actions { display: none; }
 .play-panel.camera-kiosk .game-board > video { filter: none; }
 
