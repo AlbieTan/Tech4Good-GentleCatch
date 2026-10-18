@@ -1,75 +1,120 @@
-# Gentle Catch
+# GentleCatch
 
-## Kiosk enhancements
+GentleCatch is a browser-based movement game designed for Precious Active Ageing Centre. Players move their hands to catch falling garden shapes and avoid hazards. It supports a camera-only kiosk flow for older adults, a staff-operated classic setup screen, solo play, and a local two-player split-screen score battle.
 
-The camera-only kiosk flow starts with an eight-second safety notice, then gesture-controlled choices for player count, difficulty and round length. Face-and-palm registration precedes a three-second countdown, gameplay and automatic return to the gesture menu after results. The classic mouse menu remains available for staff from the footer. Kiosk play now uses the MediaPipe palm tracker in a worker; the separate pose-first beta remains available only in the classic menu. Raspberry Pi performance is still under evaluation, not release-validated. See the [Pi kiosk guide](docs/raspberry-pi-kiosk.md) before installation.
+**[Play the deployed game](https://tech4good-gentlecatch.vercel.app/)** · **[Raspberry Pi kiosk guide](docs/raspberry-pi-kiosk.md)**
 
-Gentle Catch is a calm, camera-controlled movement game designed with older adults in mind and branded for Precious Active Ageing Centre. Leaves, flowers, hearts, and stars drift down the screen; players collect them with one or both hands while avoiding bombs and germs. Consecutive catches build a score multiplier, while touching a hazard deducts points and resets the streak.
+![Camera-only round-time menu, with the camera feed omitted](docs/screenshots/kiosk-menu.png)
 
-Built on Hakrrrm’s initial v1 prototype. AlbieTan developed v2 and v3, redesigning the UI and adding the two-player PvP and player-registration flows.
+*Camera-only menu preview. The dotted regions show where to hold a hand relative to a face; no camera image or person is included in this screenshot.*
 
-The startup flow supports solo play and a local split-screen battle. Camera sessions do not begin immediately: registration first holds each visible face steady, then looks for a raised hand or wrist associated with that player. Once registration succeeds, those player controls stay frozen through the three-second countdown so brief tracking changes cannot restart it. Face detection switches off during normal gameplay. If a player stays out of frame, the round pauses, asks that player to return, and temporarily re-enables face detection to reconnect controls before continuing. This is positional tracking only—not facial recognition—and no image or identity data is stored. Each player controls one half of the arena and receives the same sequence of objects, making the score duel easy to follow and fair.
+![Two-player split-screen gameplay preview](docs/screenshots/pvp-preview.png)
 
-The two-player setup also offers **Pose-first PvP tracking (beta)**. MoveNet MultiPose supplies each person's face point (nose), torso and wrist in the same result, and the selected wrist drives their cursor. Registration requires two visible face points and raised wrists before locking temporary pose IDs, torso zones and left/right wrists. An extra visible person blocks registration. A brief ID change can reconnect only when one torso remains near its previous position on the original side; ambiguous hands do not score. After a longer absence, the round pauses and asks a caregiver or players to confirm the same people are in their original positions before continuing, even if temporary tracking IDs stayed the same. This is positional continuity, not biometric identity verification. The bundled pose model needs WebGL; if that fails, uncheck the beta option and use the previous hand tracker.
+*Two-player gameplay preview with sample scores and cursors. A live session shows the camera behind the game; this documentation image does not capture a player.*
 
-The camera-only kiosk is now the default landing page (for example, `http://127.0.0.1:8000/`). Its branded camera-space warning remains visible for at least eight seconds, even if the camera and model become ready sooner. The gesture menu then chooses players, difficulty and round time in three steps. One raised hand selects Solo; two people each raise a hand for PvP. For the next two steps, either player raises one hand and moves it left, above or right of their face to choose Gentle/Steady/Lively and 20/30/60 seconds. Lower hands briefly between choices so one gesture cannot select two steps. Registration and the three-second countdown follow. The same camera video element runs from registration into play, avoiding a second playback handoff. After each round it shows scores for eight seconds and returns directly to the camera menu, reusing a healthy camera and model. A prolonged missing player or sustained extra person ends the round instead of handing controls to a newcomer. The footer links to the classic mouse-driven page at `?mode=manual`. A helper must grant Chromium camera permission once during installation. See [Raspberry Pi kiosk setup](docs/raspberry-pi-kiosk.md).
+## What you can play
 
-## Tracking and performance design
+| Mode | Setup and controls | What happens |
+| --- | --- | --- |
+| **Camera-only kiosk** (default `/`) | Hands choose player count, pace and time. No mouse is needed after the first camera-permission setup. | Eight-second safety notice → three gesture choices → face-and-hand registration → three-second countdown → game → results → automatic return to the gesture menu. |
+| **Classic menu** (`/?mode=manual`) | A staff member uses mouse or keyboard to choose settings. Camera-controlled play still uses tracked hands. | Offers the same solo and two-player game, plus a clearly labelled pose-first PvP tracker **beta** for comparison. |
+| **Keyboard practice** (classic menu, solo only) | Choose **Try solo with keyboard**, then use arrow keys or W/A/S/D. | Lets someone try the game without granting camera access. Space or Escape pauses during keyboard play. |
 
-The kiosk tracker requests a 640 × 360 camera stream and sends downsampled 384 × 216 frames to a MediaPipe palm detector in a Web Worker, with a 30 FPS ceiling. It never queues an inference frame while another is busy. Face checks run at most 8 times per second during the menu, registration and recovery, then switch off during normal play. Cursor presentation runs with the display refresh and uses bounded prediction to soften the effect of inference latency. The classic menu's optional pose-first beta requests about 480 × 270 at up to 24 camera frames per second and runs MoveNet MultiPose on WebGL. The game loop is capped at 30 updates per second. Diagnostics report palm or pose FPS, inference time and frame age. These are ceilings, not guaranteed rates: benchmark two-person play and menu reset on the actual Raspberry Pi 4/5 before deployment. Pi 4 PvP may still be too slow. All models are bundled locally, so there is no model download during play.
+The camera-only kiosk uses the palm tracker for **both** solo and two-player play. The optional pose-first beta is available only from the classic menu; it is not the default kiosk path.
 
-No image or video leaves the device. Model inference happens locally in browser memory.
+### Camera-only session, step by step
 
-## Laptop quick start
+1. The opening notice stays on screen for **at least eight seconds** while the camera and local tracking models start. Only players should remain in camera view.
+2. At **Players**, one person raises one hand for Solo; two people stand or sit side by side and each raise one hand for Together. Hold the detected choice until the progress bar fills.
+3. At **Difficulty** and **Round time**, either player holds **one** raised hand left, middle or right of their own face. Lower hands briefly between choices so a previous gesture does not select the next screen. The settings are Gentle / Steady / Lively and 20 / 30 / 60 seconds.
+4. Registration checks the expected number of visible faces, associates a nearby hand with each player, and waits for stable detections. The face and hand positions lock when the **three-second countdown** begins; brief detector reordering cannot restart it.
+5. During play, the palm position drives a circular cursor. In Together mode, Player 1 stays left and Player 2 stays right. Each side receives the same object type and starting position within its lane, with separate scores and streaks.
+6. Results stay visible for **eight seconds**, then the kiosk returns to the camera menu. Players must lower their hands before making the next choice. A healthy camera stream and tracker are reused instead of being reloaded.
 
-Requirements: Node.js 20.19+ or 22.12+ and a current Chrome, Edge, or Firefox browser.
+The menu needs a valid face–hand pairing and an uninterrupted hold of about **1.2 seconds**. Difficulty and round time use the **same** tracker and thresholds. A missed frame can currently reset a choice's progress; this is a known usability limitation, especially on slower hardware.
 
-```bash
-npm install
-npm run dev
-```
+## Game rules
 
-Open `http://localhost:5173`, select solo or two-player play, choose a pace, and allow camera access. Camera access requires `localhost` or HTTPS. An evenly lit room and uncluttered background give the most stable tracking. Keyboard practice is available for solo play with the arrow keys or W, A, S, and D.
+- Catch **leaves, flowers, hearts and stars** for 10, 15, 20 and 25 points respectively. Every three consecutive catches raises the multiplier by one, up to **×4**.
+- Avoid **bombs and germs**. They deduct 25 and 15 points respectively (never below zero) and reset the streak.
+- A missed collectible increases the missed count; missed hazards do not. The round ends when its time expires or the pace's miss limit is reached. In two-player play, the shared miss limit is doubled.
+- Gentle, Steady and Lively increase falling speed, spawn frequency and on-screen object count while reducing the allowed misses. Players can choose a comfortable pace; seated and standing play are both welcome.
+- Two-player mode is a **local split-screen score battle**, not network multiplayer. Each player collects objects only in their own half. The higher score wins; ties are possible.
 
-## Controls and accessibility
+## Tracking: models, APIs and safeguards
 
-- **Gentle, Steady, Lively** adjust fall speed, spawn interval, object count, and missed-object allowance.
-- Sessions can be 20 seconds, 30 seconds, or 1 minute.
-- Pause or end a session at any time. Space or Escape also pauses when playing with the keyboard.
-- The game supports keyboard navigation, large controls, semantic labels, reduced motion, high contrast preferences, and responsive layouts.
-- One or both hands can be used simultaneously. Each palm gets its own cursor.
-- In two-player mode, the two registered faces set a left/right boundary. Each player controls their lane with one hand on their side of the camera, so changes in the detector's hand order cannot switch players. If a player leaves the frame, play pauses and requires a fresh face and raised hand on each side, held steadily, before controls reconnect. Each lane has an independent score and streak HUD. Players should remain on their registered sides; the face detector checks positions, not personal identity.
-- In beta pose-first mode, each player's registered pose wrist controls their cursor. Temporary pose-ID changes are accepted only when the same torso stays near its last position on its original side. A longer absence or uncertain reassignment requires explicit same-player confirmation; the software cannot prove personal identity. Fingers and palm opening are not tracked in this mode.
-- Camera play requires each face and a raised hand beside it to remain visible briefly before the locked three-second ready countdown. A transient or stale detection cannot start registration.
-- It can be played seated or standing. The player should stop if movement is uncomfortable.
+There is **no cloud vision API**. The app uses browser camera access (`getUserMedia`) and runs model inference on the device. Model files and WebAssembly assets are bundled under [`public/models`](public/models) and [`public/wasm`](public/wasm).
 
-## Raspberry Pi 5 kiosk deployment
+| Path | Technology | Use |
+| --- | --- | --- |
+| Default kiosk and normal classic camera play | [MediaPipe Tasks Vision](https://ai.google.dev/edge/mediapipe/solutions/vision/hand_landmarker/web_js) **Hand Landmarker** plus **Face Detector** | Palm landmarks control the cursor. Face detection supports menu choices, player registration and classic-menu re-entry checks. Tracking runs in a Web Worker; it tries GPU for hands, then falls back to CPU. |
+| Optional classic-menu PvP beta | [TensorFlow.js MoveNet MultiPose](https://github.com/tensorflow/tfjs-models/tree/master/pose-detection) on WebGL | Associates a pose's nose, torso and wrist for each player. It is a comparison path and may be slower or unavailable on a Raspberry Pi. |
 
-Install Raspberry Pi OS 64-bit with Desktop, Node.js 22, and Chromium. Attach a UVC-compatible 1080p webcam, then:
+The face check is **positional tracking, not facial recognition or biometric identity verification**. It does not know whether a returning person is the same individual. In the kiosk, a player missing for roughly 1.8 seconds ends the round rather than allowing a new person to inherit their controls. In the classic menu, the game can pause for positional re-entry checks; the pose-first beta additionally asks for manual same-player confirmation. Normal palm-tracked gameplay turns face detection off to save work, so an extra person cannot be reliably detected throughout a round. Keep bystanders outside the camera view.
+
+For performance, the kiosk requests approximately **640 × 360** camera frames, downsamples hand inference to **384 × 216**, and caps palm inference at **30 FPS**. Face checks run at most **8 FPS** during setup and recovery. The game loop is capped at 30 updates per second, and inference frames are not queued while the worker is busy. These are **ceilings, not guaranteed frame rates**. Real FPS depends on browser, lighting, camera, thermals and hardware.
+
+Camera frames are processed in browser memory and are not uploaded or saved by the app. GentleCatch is a recreational wellbeing game, **not** a medical device, fall detector or rehabilitation assessment.
+
+## Run locally
+
+Use Node.js **20.19+ or 22.12+** and a current browser. From this repository:
 
 ```bash
 npm ci
-npm run build
-npm run preview -- --port 4173
+npm run dev
 ```
 
-For a kiosk session, launch Chromium after the server starts:
+Open `http://127.0.0.1:5173/` for the camera-only kiosk or `http://127.0.0.1:5173/?mode=manual` for the classic menu. Allow camera permission when prompted. Browser camera access requires a secure context; localhost/loopback works for local testing, while a remote site should use HTTPS.
 
 ```bash
-chromium-browser --kiosk --autoplay-policy=no-user-gesture-required http://localhost:4173
-```
-
-The site is entirely static after `npm run build`; `vite preview` can be replaced by nginx, Caddy, or any local static server serving `dist/`. The first camera permission must be accepted by a caregiver. For automatic kiosk startup, save the server and Chromium commands in a systemd user service or the desktop autostart configuration.
-
-## Privacy and limitations
-
-Processing happens in browser memory. Frames are discarded immediately and are never stored or uploaded. The tracker estimates 21 landmarks on each visible hand and uses the palm center as the cursor. Occlusion, very low light, motion blur, or hands outside the camera view can briefly interrupt tracking. It is a recreational wellbeing game, not a medical device, fall detector, or rehabilitation assessment.
-
-## Commands
-
-```bash
-npm run dev       # development server
 npm test          # unit tests
-npm run build     # production bundle
-npm run preview   # serve production bundle locally
+npm run build     # static production files in dist/
+npm run preview   # locally serve the production build
 ```
+
+The `?preview=...` routes used to make the screenshots above are development-only and do not start a real camera session.
+
+## Deploy on a Raspberry Pi
+
+**Pi 5 is preferred**, particularly for two-player play. A Pi 4 may struggle with sustained tracking; neither board has been release-validated for this project yet. Test the complete session on the actual board before using it with participants.
+
+1. Install **Raspberry Pi OS 64-bit with Desktop**, a suitable power supply, Chromium, and a UVC-compatible webcam. Use a current Node.js version meeting the requirement above if building on the Pi.
+2. Clone this branch on the Pi and build it, or build on another computer and copy the resulting `dist/` directory to the Pi:
+
+   ```bash
+   git clone --branch v8-gentlecatch-branding https://github.com/AlbieTan/Tech4Good-GentleCatch.git
+   cd Tech4Good-GentleCatch
+   npm ci
+   npm run build
+   python3 -m http.server 8000 --bind 127.0.0.1 --directory dist
+   ```
+
+3. In a persistent Chromium profile, visit `http://127.0.0.1:8000/` and **allow camera access once with staff present**. Then test a full solo and two-player session.
+4. Configure the static server to start before Chromium and to restart on failure. Launch Chromium in kiosk mode at the same loopback URL. Follow the [official Raspberry Pi kiosk tutorial](https://www.raspberrypi.com/tutorials/how-to-use-a-raspberry-pi-in-kiosk-mode/) for the installed desktop's autostart method. Our [Pi-specific guide](docs/raspberry-pi-kiosk.md) has an installation outline and safety checks.
+5. Cold-reboot the Pi and verify that the browser opens, camera permission persists, the menu works without a mouse, both players remain tracked, and results return to the menu.
+
+Do not use a browser flag that silently grants camera access to every site. Keep a staff-accessible way to exit kiosk mode or stop the Pi; the game UI is not an emergency stop.
+
+### Before a real session
+
+| Check | Why it matters |
+| --- | --- |
+| Even light on faces and hands; camera near display height | Low light, blur and backlighting reduce detections. |
+| Both players fully in view, on separate sides, with space between them | Crossed arms, overlapping faces and hands, or a third person can make ownership ambiguous. |
+| Hands visible beside (not covering) faces during setup | The menu and registration deliberately reject uncertain face–hand pairings. |
+| Watch actual palm FPS and responsiveness for a full 60-second PvP round | A successful startup alone does not establish Pi performance. |
+| Test loss of camera, player leaving frame, round end and reboot recovery | Kiosk operation must recover safely without a mouse. |
+| Offer seated play and a staff-assisted alternative | Players should stop if movement is uncomfortable or tracking becomes frustrating. |
+
+## Known limitations and troubleshooting
+
+- **Selection bar not filling:** lower all hands briefly after the previous choice, then show only one hand beside a visible face. Keep the hand in one zone. A detection dropout currently resets the 1.2-second hold.
+- **Tracking lags:** improve light, avoid backlighting, close other tabs and camera apps, and check the on-screen tracker FPS/inference time. The Pi 5 is the recommended starting point for PvP; Pi 4 PvP is unverified.
+- **Two players swap or cannot register:** stand farther apart, keep hands on your own sides, avoid crossing the middle, and keep bystanders out of view. The app uses position, not biometric identity.
+- **No camera:** confirm the browser has permission for the exact localhost origin, the webcam is connected and unused by another app, and Chromium is running on the Pi desktop.
+- **Browser works on desktop but not Pi:** confirm a 64-bit OS, current Chromium, local model/WASM files in `dist/`, sufficient power and cooling, and that the static server is reachable before Chromium launches.
+
+## Credits
+
+Built on [Hakrrrm's initial v1 Tech4Good prototype](https://github.com/Hakrrrm/tech4good). [AlbieTan](https://github.com/AlbieTan) developed the later UI, kiosk and two-player versions. Precious Active Ageing Centre and NTU branding appears in the game. See [third-party notices](THIRD_PARTY_NOTICES.md) for model and library attribution.
