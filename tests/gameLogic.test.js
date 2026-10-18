@@ -41,6 +41,7 @@ import { matchDetectedFacesToPoses, normalizePosePlayers } from "../src/poseTrac
 import { HybridTracker } from "../src/hybridTracker.js";
 import { matchPoseHands } from "../src/hybridTrackingMath.js";
 import {
+  areHandCandidatesStable,
   associateHandsToFaces,
   getLockedHand,
   handIdentity,
@@ -427,7 +428,7 @@ describe("face-first registration", () => {
     const snapshot = snapshotFaces(selected, "hybrid");
     expect(sameFaceCandidates(snapshot, selected, "hybrid")).toBe(true);
     expect(sameFaceCandidates(snapshot, [{ face: face(0.7, 1), slot: 0 }], "hybrid")).toBe(false);
-    expect(sameFaceCandidates(snapshot, [{ face: face(0.28, 9), slot: 0 }], "hybrid")).toBe(false);
+    expect(sameFaceCandidates(snapshot, [{ face: face(0.28, 9), slot: 0 }], "hybrid")).toBe(true);
   });
 
   it("associates nearby hands to the correct face without using detector order", () => {
@@ -476,17 +477,25 @@ describe("face-first registration", () => {
       [hand(0.58, 0.65, 1), hand(0.62, 0.65, 2)], selected, "hybrid", 1010,
     );
     expect(matches.map((match) => match?.personId)).toEqual([1, 2]);
-    expect(handIdentity(matches[0], "hybrid")).toBe("pose:1:left");
+    expect(handIdentity(matches[0], "hybrid")).toBe("wrist:left");
     expect(handIdentity({ ...matches[0], registrationSlot: 9 }, "hybrid"))
-      .toBe("pose:1:left");
+      .toBe("wrist:left");
   });
 
   it("does not register a low-confidence or lowered pose wrist", () => {
     const selected = selectRegistrationFaces([face(0.25, 1)], 1, 1010);
-    expect(associateHandsToFaces([{ ...hand(0.35, 0.44, 1), confidence: 0.4 }],
+    expect(associateHandsToFaces([{ ...hand(0.35, 0.44, 1), confidence: 0.3 }],
       selected, "hybrid", 1010)).toEqual([null]);
     expect(associateHandsToFaces([hand(0.35, 0.71, 1)],
       selected, "hybrid", 1010)).toEqual([null]);
+  });
+
+  it("waits safely for the active players' hand candidates", () => {
+    const candidate = { since: 1000 };
+    expect(areHandCandidatesStable([candidate, null], 1, 1400)).toBe(true);
+    expect(areHandCandidatesStable([candidate, null], 2, 1400)).toBe(false);
+    expect(areHandCandidatesStable([null, null], 1, 1400)).toBe(false);
+    expect(areHandCandidatesStable([candidate, null], 1, 1200)).toBe(false);
   });
 
   it("tolerates a slower pose frame but not a stale wrist", () => {
@@ -499,11 +508,30 @@ describe("face-first registration", () => {
 });
 
 describe("pose-first tracker lifecycle", () => {
+  it("emits face points and wrists from the same pose result during registration", () => {
+    const frames = [];
+    const tracker = new HybridTracker(null, (wrists, faces) => frames.push({ wrists, faces }), () => {});
+    tracker.setFaceTrackingEnabled(true);
+    const now = performance.now();
+    tracker.pose.onHands([], [
+      { x: 0.2, y: 0.2, personId: 1, lastSeen: now, interactive: true },
+      { x: 0.8, y: 0.2, personId: 2, lastSeen: now, interactive: true },
+    ], [
+      { x: 0.25, y: 0.3, personId: 1, side: "left", lastSeen: now, interactive: true },
+      { x: 0.75, y: 0.3, personId: 2, side: "right", lastSeen: now, interactive: true },
+    ]);
+    expect(frames.at(-1).faces.map((face) => face.personId)).toEqual([1, 2]);
+    expect(frames.at(-1).wrists.map((wrist) => wrist.personId)).toEqual([1, 2]);
+    tracker.setFaceTrackingEnabled(false);
+    expect(tracker.activeFaces()).toEqual([]);
+    tracker.dispose();
+  });
+
   it("keeps player locks across pause and resume", () => {
     const tracker = new HybridTracker(null, () => {}, () => {});
     tracker.lockPlayers([{ personId: 7, side: "left" }]);
     tracker.stop();
-    expect(tracker.locks).toEqual([{ personId: 7, side: "left" }]);
+    expect(tracker.locks).toMatchObject([{ personId: 7, side: "left" }]);
     tracker.dispose();
     expect(tracker.locks).toEqual([]);
   });

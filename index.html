@@ -10,7 +10,7 @@
   </head>
   <body>
     <a class="skip-link" href="#game">Skip to the game</a>
-    <div id="app">
+    <div id="app" class="loading-view">
       <header class="site-header">
         <div class="partner-lockup" aria-label="A project for Precious Active Ageing Centre with NTU Singapore">
           <img class="partner-logo precious-logo" src="/brand/precious-aac-transparent.png" alt="Precious Active Ageing Centre" />
@@ -24,7 +24,7 @@
       </header>
 
       <main id="game" class="game-shell">
-        <section id="landingPanel" class="landing-panel screen-panel" aria-labelledby="landingTitle">
+        <section id="landingPanel" class="landing-panel screen-panel" aria-labelledby="landingTitle" hidden>
           <div class="landing-art" aria-hidden="true">
             <span class="float-shape shape-one">✿</span>
             <span class="float-shape shape-two">♥</span>
@@ -79,7 +79,7 @@
             </div>
             <label id="poseTrackerOption" class="tracker-option" hidden>
               <input id="poseTrackerToggle" type="checkbox" checked />
-              <span><strong>Pose-first PvP tracking (beta)</strong><small>Body pose connects each player and follows their wrists; face checks run only during setup and re-entry.</small></span>
+              <span><strong>Pose-first PvP tracking (beta)</strong><small>One pose model links each face point, body and wrist; face points are checked during setup and re-entry.</small></span>
             </label>
           </fieldset>
 
@@ -117,8 +117,42 @@
           <p class="safety-note"><strong>Comfort first.</strong> Move only as far as feels comfortable, and stop at any time.</p>
         </section>
 
+        <section id="loadingPanel" class="loading-panel screen-panel" aria-labelledby="loadingTitle">
+          <div class="loading-brand-logos" aria-label="Precious Active Ageing Centre and NTU Singapore">
+            <img src="/brand/precious-aac-transparent.png" alt="Precious Active Ageing Centre" />
+            <span aria-hidden="true"></span>
+            <img src="/brand/ntu.png" alt="Nanyang Technological University Singapore" />
+          </div>
+          <h1 class="loading-game-name">Gentle Catch</h1>
+          <p class="eyebrow">Getting the camera ready</p>
+          <h2 id="loadingTitle">Players in view, please</h2>
+          <p class="loading-lead">Only the people playing should be in the camera view. Everyone else, please stand outside the camera area until the round ends.</p>
+          <p id="loadingStatus" class="loading-status" role="status">Starting the camera and tracking model…</p>
+          <p id="loadingCountdown" class="loading-countdown" aria-hidden="true" hidden></p>
+          <p class="loading-read-time">This screen stays up for at least 8 seconds so everyone can read it.</p>
+          <p class="loading-comfort">Players can sit or stand. Move only as far as feels comfortable.</p>
+        </section>
+
         <section id="registrationPanel" class="registration-panel screen-panel" aria-labelledby="registrationTitle" hidden>
           <div class="registration-copy">
+            <div id="cameraMenu" class="camera-menu" hidden>
+              <p id="cameraMenuStep" class="eyebrow">Step 1 of 3 · Players</p>
+              <p class="camera-menu-brand">Gentle Catch</p>
+              <h2 id="cameraMenuTitle">Choose how to play</h2>
+              <p id="cameraMenuInstruction">For Solo, one person raises a hand. To play together, two people each raise a hand. Hold steady until the choice fills.</p>
+              <div id="cameraMenuModeChoices" class="camera-menu-choices" aria-hidden="true">
+                <div id="cameraMenuSolo" class="camera-menu-choice"><strong>1 player</strong><span>Solo</span></div>
+                <div id="cameraMenuPvp" class="camera-menu-choice"><strong>2 players</strong><span>Play together</span></div>
+              </div>
+              <div id="cameraMenuSettingChoices" class="camera-menu-choices camera-menu-choices-three" aria-hidden="true" hidden>
+                <div id="cameraMenuLeft" class="camera-menu-choice"><strong>Gentle</strong><span>Hand left</span></div>
+                <div id="cameraMenuMiddle" class="camera-menu-choice"><strong>Steady</strong><span>Hand middle</span></div>
+                <div id="cameraMenuRight" class="camera-menu-choice"><strong>Lively</strong><span>Hand right</span></div>
+              </div>
+              <div class="camera-menu-meter" aria-hidden="true"><span id="cameraMenuMeter"></span></div>
+              <p id="cameraMenuStatus" class="camera-menu-status" role="status">Waiting for one or two players with raised hands…</p>
+              <small id="cameraMenuSummary">Choose players → difficulty → time. No mouse is needed.</small>
+            </div>
             <button id="cancelRegistration" class="text-button" type="button">← Change setup</button>
             <p class="eyebrow">Camera registration</p>
             <h2 id="registrationTitle">Look forward and raise your hand<span id="registrationPlural">s</span></h2>
@@ -166,7 +200,8 @@
               <div class="face-anchor face-two" hidden><span>2</span></div>
             </div>
             <div id="countdownBadge" class="countdown-badge" hidden aria-live="assertive">
-              <small>Starting in</small><strong id="countdownValue">3</strong>
+              <small>Players only · others, please stay outside the camera view</small>
+              <span>Starting in</span><strong id="countdownValue">3</strong>
             </div>
           </div>
         </section>
@@ -185,7 +220,6 @@
           </div>
 
           <div id="gameBoard" class="game-board" tabindex="0" aria-describedby="playInstructions">
-            <video id="cameraVideo" muted playsinline aria-label="Your mirrored camera view"></video>
             <div class="camera-wash" aria-hidden="true"></div>
             <div id="pvpArena" class="pvp-arena" hidden aria-hidden="true">
               <div class="battle-lane battle-lane-one">
@@ -213,6 +247,7 @@
               <span class="tracking-dot" aria-hidden="true"></span>
               <strong>Looking for your hands</strong>
             </div>
+            <p id="cameraSpaceNotice" class="camera-space-notice" hidden>Two players only · Everyone else, please stay outside the camera view</p>
             <p id="trackingDiagnostics" class="tracker-diagnostics tracker-diagnostics-play" hidden></p>
             <div id="trackingRecovery" class="tracking-recovery" hidden role="alert" aria-live="assertive">
               <div class="tracking-recovery-card">
@@ -223,6 +258,7 @@
                   <span id="recoveryFaceCheck">○ Face</span>
                   <span id="recoveryHandCheck">○ Hand</span>
                 </div>
+                <button id="recoveryConfirm" class="button button-primary" type="button" hidden disabled>Same players — continue</button>
                 <p>The round is paused while we reconnect you.</p>
               </div>
             </div>
@@ -248,11 +284,13 @@
             <button id="playAgain" class="button button-primary" type="button">Play another session</button>
             <button id="backHome" class="button button-secondary" type="button">Back to welcome</button>
           </div>
+          <p id="resultsKioskStatus" class="results-kiosk-status" hidden>Returning to the camera menu in 8 seconds. Lower your hands, then choose another round.</p>
         </section>
       </main>
 
       <footer>
         <p>Camera images are processed in browser memory and immediately discarded. Gentle Catch is a recreational wellbeing game, not a medical device.</p>
+        <a id="modeSwitch" href="?mode=manual">Switch to the classic menu</a>
       </footer>
       <div id="statusLive" class="sr-only" aria-live="polite"></div>
     </div>

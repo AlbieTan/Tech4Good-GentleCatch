@@ -23,8 +23,17 @@ import {
 import { HandTracker } from "./handTracker.js";
 import { HybridTracker } from "./hybridTracker.js";
 import {
+  advanceCameraMenu,
+  advanceCameraMenuRelease,
+  getCameraMenuChoice,
+  getCameraSettingChoice,
+  hasRaisedMenuWrist,
+} from "./cameraMenu.js";
+import { sameRegisteredPosePlayers } from "./poseOwnership.js";
+import {
   FACE_LOCK_MS,
   HAND_LOCK_MS,
+  areHandCandidatesStable,
   associateHandsToFaces,
   getLockedHand,
   handIdentity,
@@ -34,10 +43,21 @@ import {
 } from "./registrationTracking.js";
 
 const $ = (selector) => document.querySelector(selector);
-const panels = [$("#landingPanel"), $("#setupPanel"), $("#registrationPanel"), $("#playPanel"), $("#resultsPanel")];
+const pageParams = new URLSearchParams(window.location.search);
+const kioskMode = pageParams.get("mode") !== "manual"
+  && pageParams.get("kiosk") !== "0" && !pageParams.has("preview");
+const MIN_LOADING_READ_MS = 8000;
+// A small margin avoids accidentally dropping to 20 FPS on 60 Hz displays.
+const CAMERA_GAME_FRAME_MS = 1000 / 30 - 2;
+const STATS_REFRESH_MS = 250;
+const DIAGNOSTICS_REFRESH_MS = 500;
+const panels = [$("#landingPanel"), $("#setupPanel"), $("#loadingPanel"), $("#registrationPanel"), $("#playPanel"), $("#resultsPanel")];
 const elements = {
   landing: $("#landingPanel"),
   setup: $("#setupPanel"),
+  loading: $("#loadingPanel"),
+  loadingStatus: $("#loadingStatus"),
+  loadingCountdown: $("#loadingCountdown"),
   registration: $("#registrationPanel"),
   play: $("#playPanel"),
   results: $("#resultsPanel"),
@@ -50,6 +70,19 @@ const elements = {
   cameraMessage: $("#cameraMessage"),
   cancelRegistration: $("#cancelRegistration"),
   registrationVideo: $("#registrationVideo"),
+  registrationStage: $("#registrationStage"),
+  cameraMenu: $("#cameraMenu"),
+  cameraMenuStep: $("#cameraMenuStep"),
+  cameraMenuTitle: $("#cameraMenuTitle"),
+  cameraMenuInstruction: $("#cameraMenuInstruction"),
+  cameraMenuModeChoices: $("#cameraMenuModeChoices"),
+  cameraMenuSettingChoices: $("#cameraMenuSettingChoices"),
+  cameraMenuSolo: $("#cameraMenuSolo"),
+  cameraMenuPvp: $("#cameraMenuPvp"),
+  cameraMenuPositions: [$("#cameraMenuLeft"), $("#cameraMenuMiddle"), $("#cameraMenuRight")],
+  cameraMenuMeter: $("#cameraMenuMeter"),
+  cameraMenuStatus: $("#cameraMenuStatus"),
+  cameraMenuSummary: $("#cameraMenuSummary"),
   registrationPlural: $("#registrationPlural"),
   registrationInstruction: $("#registrationInstruction"),
   registrationStatus: $("#registrationStatus"),
@@ -74,13 +107,15 @@ const elements = {
   cursors: [...document.querySelectorAll("#playerCursors .player-cursor")],
   trackingStatus: $("#trackingStatus"),
   trackingStatusText: $("#trackingStatus strong"),
+  cameraSpaceNotice: $("#cameraSpaceNotice"),
   trackingDiagnostics: $("#trackingDiagnostics"),
   trackingRecovery: $("#trackingRecovery"),
   recoveryTitle: $("#recoveryTitle"),
   recoveryMessage: $("#recoveryMessage"),
   recoveryFaceCheck: $("#recoveryFaceCheck"),
   recoveryHandCheck: $("#recoveryHandCheck"),
-  video: $("#cameraVideo"),
+  recoveryConfirm: $("#recoveryConfirm"),
+  video: $("#registrationVideo"),
   playerOneScore: $("#playerOneScore"),
   playerOneStreak: $("#playerOneStreak"),
   playerTwoScoreCard: $("#playerTwoScoreCard"),
@@ -103,7 +138,9 @@ const elements = {
   resultMessage: $("#resultMessage"),
   playAgain: $("#playAgain"),
   backHome: $("#backHome"),
+  resultsKioskStatus: $("#resultsKioskStatus"),
   statusLive: $("#statusLive"),
+  modeSwitch: $("#modeSwitch"),
 };
 
 function emptyPlayerStats() {
@@ -112,6 +149,7 @@ function emptyPlayerStats() {
 
 const state = {
   phase: "landing",
+  starting: false,
   running: false,
   paused: false,
   inputMode: "keyboard",
@@ -130,6 +168,8 @@ const state = {
   pausedAt: 0,
   pausedDuration: 0,
   lastFrame: 0,
+  lastStatsAt: 0,
+  lastDiagnosticsAt: 0,
   lastSpawn: 0,
   objects: [],
   players: [],
@@ -138,7 +178,13 @@ const state = {
   registrationMatches: [],
   registrationFaceCandidate: null,
   registrationFaceLock: null,
+  registrationLastFaceAt: 0,
   registrationHandCandidates: [null, null],
+  cameraMenuCandidate: null,
+  cameraMenuStage: "mode",
+  cameraMenuArmed: true,
+  cameraMenuReleaseSince: null,
+  registrationStartedAt: 0,
   keys: new Set(),
   stream: null,
   animationId: null,
@@ -155,10 +201,15 @@ const state = {
   recoveryMissingPlayers: [],
   recoveryStartedAt: 0,
   recoveryReadySince: null,
+  recoveryCandidate: null,
+  kioskRestartTimer: null,
+  gameVideoRetryCount: 0,
+  extraBodySince: null,
 };
 
 function showPanel(panel, phase) {
   panels.forEach((candidate) => { candidate.hidden = candidate !== panel; });
+  $("#app").classList.toggle("loading-view", panel === elements.loading);
   state.phase = phase;
   panel.scrollIntoView({ block: "start" });
 }
@@ -169,7 +220,8 @@ function selectedValue(name) {
 
 function configureFromSetup() {
   state.playMode = selectedValue("playMode");
-  state.trackerKind = state.playMode === "pvp" && elements.poseTrackerToggle.checked ? "hybrid" : "hand";
+  state.trackerKind = kioskMode || state.playMode === "pvp" && elements.poseTrackerToggle.checked
+    ? "hybrid" : "hand";
   state.pace = selectedValue("pace");
   state.durationSeconds = Number(selectedValue("duration"));
   state.remainingSeconds = state.durationSeconds;
@@ -189,7 +241,8 @@ function gameplayPlayers(hands) {
   if (state.playMode === "pvp") {
     const assigned = state.trackerKind === "hybrid"
       ? state.playerPoseIds.map((id, index) => hands.find((hand) =>
-        hand?.personId === id && hand.side === state.playerHandSides[index]) ?? null)
+        hand?.ownerIndex === index || (hand?.personId === id
+          && hand.side === state.playerHandSides[index])) ?? null)
       : state.playerHandSlots.map((slot, index) =>
         getLockedHand(hands, slot, index, state.playerBoundary));
     return assigned.map((hand, ownerIndex) => {
@@ -205,7 +258,9 @@ function gameplayPlayers(hands) {
       } : null;
     });
   }
-  const hand = getLockedHand(hands, state.playerHandSlots[0]);
+  const hand = state.trackerKind === "hybrid"
+    ? hands.find((candidate) => candidate?.ownerIndex === 0) ?? null
+    : getLockedHand(hands, state.playerHandSlots[0]);
   return hand
     ? [{ ...hand, radius: 44, ownerIndex: 0 }]
     : state.players[0] ? [{ ...state.players[0], interactive: false }] : [];
@@ -249,12 +304,21 @@ function updateRecoveryOverlay(hands = [], faces = [], now = performance.now()) 
 
 function startTrackingRecovery(missingPlayers, now) {
   if (state.recoveryActive) return;
+  if (kioskMode) {
+    // A camera-only kiosk cannot ask someone to click an identity confirmation.
+    // End this round rather than allow a newcomer to inherit its controls.
+    endSession("interrupted");
+    return;
+  }
   state.recoveryActive = true;
   state.recoveryMissingPlayers = [...missingPlayers];
   state.recoveryStartedAt = now;
   state.recoveryReadySince = null;
+  state.recoveryCandidate = null;
   state.faces = [];
   elements.trackingRecovery.hidden = false;
+  elements.recoveryConfirm.hidden = state.trackerKind !== "hybrid";
+  elements.recoveryConfirm.disabled = true;
   elements.pause.disabled = true;
   if (state.trackerKind === "hybrid") tracker.unlockPlayers();
   tracker.setFaceTrackingEnabled(true);
@@ -271,6 +335,7 @@ function finishTrackingRecovery(hands, selected, matches, now) {
   state.recoveryMissingPlayers = [];
   state.recoveryStartedAt = 0;
   state.recoveryReadySince = null;
+  state.recoveryCandidate = null;
   state.missingPlayerSince = [null, null];
   state.faces = [];
   elements.trackingRecovery.hidden = true;
@@ -284,8 +349,20 @@ function handleRecoveryTracking(hands, faces, now) {
   state.faces = faces;
   const { ready, selected, matches } = updateRecoveryOverlay(hands, faces, now);
   state.recoveryReadySince = getStableRecoveryStart(state.recoveryReadySince, ready, now);
+  state.recoveryCandidate = null;
+  elements.recoveryConfirm.disabled = true;
   if (state.recoveryReadySince !== null && now - state.recoveryReadySince >= RECOVERY_STABLE_MS) {
-    finishTrackingRecovery(hands, selected, matches, now);
+    if (state.trackerKind !== "hybrid") {
+      finishTrackingRecovery(hands, selected, matches, now);
+    } else {
+      state.recoveryCandidate = { hands, selected, matches, at: now };
+      elements.recoveryConfirm.disabled = false;
+      elements.recoveryMessage.textContent = sameRegisteredPosePlayers(
+        selected, matches, state.playerPoseIds, state.playerHandSides,
+      )
+        ? "Players are back in position. Please confirm they are the same people before continuing."
+        : "Tracking labels changed. Please confirm the same people are on their original sides before continuing.";
+    }
   }
 }
 
@@ -307,6 +384,41 @@ function monitorGameplayPresence(now) {
 
 const handleTrackedPlayers = (hands, faces) => {
   if (state.inputMode !== "camera") return;
+  if (state.phase === "camera-menu") {
+    const now = performance.now();
+    if (!state.cameraMenuArmed) {
+      const release = advanceCameraMenuRelease(
+        state.cameraMenuReleaseSince, hasRaisedMenuWrist(hands, now), now,
+      );
+      state.cameraMenuReleaseSince = release.since;
+      if (release.armed) {
+        state.cameraMenuArmed = true;
+        elements.cameraMenuStatus.textContent = "Ready. Raise one hand beside your face to choose.";
+      }
+      return;
+    }
+    const choice = state.cameraMenuStage === "mode"
+      ? getCameraMenuChoice(hands, faces, now)
+      : getCameraSettingChoice(hands, faces, state.playMode === "pvp" ? 2 : 1, now);
+    const menu = advanceCameraMenu(state.cameraMenuCandidate, choice, now);
+    state.cameraMenuCandidate = menu.candidate;
+    elements.cameraMenuSolo.classList.toggle("is-active", state.cameraMenuStage === "mode" && choice === "solo");
+    elements.cameraMenuPvp.classList.toggle("is-active", state.cameraMenuStage === "mode" && choice === "pvp");
+    elements.cameraMenuPositions.forEach((element, index) =>
+      element.classList.toggle("is-active", state.cameraMenuStage !== "mode"
+        && choice === ["left", "middle", "right"][index]));
+    elements.cameraMenuMeter.style.width = `${Math.round(menu.progress * 100)}%`;
+    elements.cameraMenuStatus.textContent = !choice
+      ? state.cameraMenuStage === "mode" ? "Waiting for one or two players with raised hands…"
+        : "Keep only one raised hand visible beside a player's face."
+      : state.cameraMenuStage === "mode"
+        ? choice === "pvp" ? "Two players found — keep both hands raised…" : "One player found — keep your hand raised…"
+        : `${state.cameraMenuStage === "pace"
+          ? { left: "Gentle", middle: "Steady", right: "Lively" }[choice]
+          : { left: "20 seconds", middle: "30 seconds", right: "60 seconds" }[choice]} selected — hold your hand there…`;
+    if (menu.selected) advanceCameraMenuStage(menu.selected, now);
+    return;
+  }
   if (isRegistrationLocked(state.phase)) {
     // Registration is immutable once the countdown starts. Brief detector
     // dropouts or reordered results must not move players or restart the timer.
@@ -333,12 +445,35 @@ const handleTrackedPlayers = (hands, faces) => {
     state.faces = [];
     state.players = gameplayPlayers(hands);
     monitorGameplayPresence(now);
+    renderCursors(elements.cursors);
   }
 };
 
 const handleTrackerStatus = (status) => {
   if (state.inputMode !== "camera") return;
-  if (isRegistrationLocked(state.phase)) return;
+  if (isRegistrationLocked(state.phase) && status.type !== "fatal-error") return;
+  if (status.type === "fatal-error") {
+    const detail = String(status.message || "Pose tracking stopped.").slice(0, 160);
+    if (state.running) {
+      endSession("interrupted");
+      stopCamera();
+      tracker.dispose();
+      elements.resultMessage.textContent = `Movement tracking stopped (${detail}). The camera will restart for the next round.`;
+    } else {
+      stopCamera();
+      tracker.dispose();
+      if (kioskMode) {
+        elements.loadingStatus.textContent = `Movement tracking stopped (${detail}). Restarting automatically…`;
+        showPanel(elements.loading, "loading");
+        clearTimeout(state.kioskRestartTimer);
+        state.kioskRestartTimer = setTimeout(() => void startWithCamera(), 5000);
+      } else {
+        showPanel(elements.setup, "setup");
+        elements.cameraMessage.textContent = `Movement tracking stopped: ${detail}. Please try the camera again.`;
+      }
+    }
+    return;
+  }
   if (status.type === "face-ready") {
     state.faceTrackingReady = true;
     state.faceTrackingError = "";
@@ -348,7 +483,7 @@ const handleTrackerStatus = (status) => {
         ? "Body and hand tracking is ready."
         : "Face position tracking is ready.";
     } else if (state.recoveryActive) {
-      elements.statusLive.textContent = "Face scanner ready. Waiting to reconnect player controls.";
+      elements.statusLive.textContent = "Face tracking ready. Waiting to reconnect player controls.";
     }
   }
   if (status.type === "face-error") {
@@ -361,25 +496,47 @@ const handleTrackerStatus = (status) => {
       setRegistrationStatus("face-error", "Face scanner could not start. Please change setup and try again.", false);
     }
   }
+  if (status.type === "pose-rebound") {
+    status.changes.forEach(({ ownerIndex, personId }) => {
+      state.playerPoseIds[ownerIndex] = personId;
+    });
+  }
   if (status.type === "tracking" && state.phase === "playing" && !state.recoveryActive) {
     updateTrackingStatus(state.players.filter((player) => player?.interactive !== false).length);
+    if (state.trackerKind === "hybrid" && kioskMode) {
+      if ((status.bodyCount ?? 0) > activePlayerCount()) {
+        state.extraBodySince ??= performance.now();
+        if (kioskMode && performance.now() - state.extraBodySince > 1200) {
+          endSession("interrupted");
+          return;
+        }
+      } else {
+        state.extraBodySince = null;
+      }
+    }
   }
   if (status.type === "tracking") {
+    const now = performance.now();
+    if (now - state.lastDiagnosticsAt < DIAGNOSTICS_REFRESH_MS) return;
+    state.lastDiagnosticsAt = now;
     const message = state.trackerKind === "hybrid"
-      ? `Bodies ${status.bodyCount ?? 0} · Wrists ${status.count ?? 0} · Pose ${status.fps ?? 0} FPS / ${Math.round(status.inferenceMs ?? 0)} ms · ${state.recoveryActive || state.phase === "registering" ? `Faces ${status.rawFaceCount ?? 0} · Linked ${status.faceCount ?? 0} · Face ${Math.round(status.faceInferenceMs ?? 0)} ms` : "Face check off"} · IDs ${status.personIds?.join(", ") || "—"}`
+      ? `Bodies ${status.bodyCount ?? 0} · Wrists ${status.count ?? 0} · ${status.cameraWidth ?? 0}×${status.cameraHeight ?? 0} · Video ${status.cameraFps ?? 0} FPS / Pose ${status.fps ?? 0} FPS / ${Math.round(status.inferenceMs ?? 0)} ms / frame age ${Math.round(status.frameAgeMs ?? 0)} ms · ${state.recoveryActive || state.phase === "registering" ? `Face points ${status.faceCount ?? 0}` : "Face check off"} · IDs ${status.personIds?.join(", ") || "—"}`
       : `Faces ${status.faceCount ?? 0} · Hands ${status.count ?? 0} · ${status.backend ?? "Local"}`;
     elements.registrationDiagnostics.textContent = message;
     elements.trackingDiagnostics.textContent = message;
   }
   if (status.type === "error") {
+    const detail = String(status.message || "Tracking paused.").slice(0, 160);
     if (state.phase === "registering" || state.phase === "countdown") {
-      elements.registrationStatusText.textContent = "Tracking is recovering…";
+      elements.registrationStatusText.textContent = `Tracking paused: ${detail}. Retrying…`;
+    } else if (state.phase === "camera-menu") {
+      elements.cameraMenuStatus.textContent = `Tracking paused: ${detail}. Retrying…`;
     } else if (state.recoveryActive) {
-      elements.recoveryMessage.textContent = "Tracking is reconnecting… keep your face and hands visible.";
+      elements.recoveryMessage.textContent = `Tracking paused: ${detail}. Retrying…`;
     } else if (state.phase === "playing") {
-      elements.trackingStatusText.textContent = "Tracking is recovering…";
+      elements.trackingStatusText.textContent = `Tracking paused: ${detail}. Retrying…`;
     }
-    elements.statusLive.textContent = "Player tracking is recovering.";
+    elements.statusLive.textContent = `Player tracking paused: ${detail}.`;
   }
 };
 
@@ -398,13 +555,15 @@ function updateTrackingStatus(count) {
   const needed = getRequiredHandCount(state.playMode);
   const ready = count >= needed;
   elements.trackingStatus.classList.toggle("hands-ready", ready);
+  let message;
   if (state.playMode === "pvp") {
-    elements.trackingStatusText.textContent = ready
+    message = ready
       ? "Both player controls connected"
       : "Tracking player hands…";
   } else {
-    elements.trackingStatusText.textContent = count ? "Hand tracking is ready" : "Show a hand to the camera";
+    message = count ? "Hand tracking is ready" : "Show a hand to the camera";
   }
+  if (elements.trackingStatusText.textContent !== message) elements.trackingStatusText.textContent = message;
 }
 
 async function requestCamera() {
@@ -413,19 +572,18 @@ async function requestCamera() {
   }
   const stream = await navigator.mediaDevices.getUserMedia({
     audio: false,
-    video: {
-      width: { ideal: 960, max: 1280 },
-      height: { ideal: 540, max: 720 },
-      facingMode: "user",
-      frameRate: { ideal: 24, max: 30 },
-    },
+    video: state.trackerKind === "hybrid"
+      ? { width: { ideal: 480, max: 640 }, height: { ideal: 270, max: 360 },
+        facingMode: "user", frameRate: { ideal: 24, max: 24 } }
+      : { width: { ideal: 960, max: 1280 }, height: { ideal: 540, max: 720 },
+        facingMode: "user", frameRate: { ideal: 24, max: 30 } },
   });
+  state.stream = stream;
+  elements.registrationStage.prepend(elements.video);
+  elements.video.hidden = false;
   tracker.setVideo(elements.registrationVideo);
   elements.registrationVideo.srcObject = stream;
-  elements.video.srcObject = stream;
   await elements.registrationVideo.play();
-  elements.video.pause();
-  state.stream = stream;
 }
 
 function stopCamera() {
@@ -433,14 +591,13 @@ function stopCamera() {
   tracker.stop();
   state.stream?.getTracks().forEach((track) => track.stop());
   state.stream = null;
-  elements.registrationVideo.pause();
   elements.video.pause();
-  elements.registrationVideo.srcObject = null;
   elements.video.srcObject = null;
 }
 
 function setRegistrationStatus(key, text, ready) {
-  if (state.registrationStatusKey === key) return;
+  if (state.registrationStatusKey === key && elements.registrationStatusText.textContent === text
+    && elements.registrationStatus.classList.contains("is-ready") === ready) return;
   state.registrationStatusKey = key;
   elements.registrationStatus.classList.toggle("is-ready", ready);
   elements.registrationStatusText.textContent = text;
@@ -457,7 +614,9 @@ function updateFaceLockProgress(faces = [], hands = [], now = performance.now())
   elements.faceModelStatus.classList.toggle("is-error", Boolean(state.faceTrackingError));
   elements.faceModelStatus.textContent = state.faceTrackingError
     ? "Scanner unavailable"
-    : state.faceTrackingReady ? "Scanner ready" : "Starting scanner…";
+    : state.faceTrackingReady
+      ? state.trackerKind === "hybrid" ? "Face points ready" : "Scanner ready"
+      : "Starting scanner…";
   elements.facePlayers.forEach((row, index) => {
     row.hidden = index >= requiredFaces;
     if (row.hidden) return;
@@ -496,9 +655,95 @@ function setRegistrationCopy() {
   );
 }
 
+function showCameraMenu(requireRelease = false) {
+  state.cameraMenuStage = "mode";
+  state.cameraMenuArmed = !requireRelease;
+  state.cameraMenuReleaseSince = null;
+  state.cameraMenuCandidate = null;
+  resetFaceRegistration();
+  state.players = [];
+  state.faces = [];
+  elements.cameraMenuMeter.style.width = "0%";
+  renderCameraMenuStage();
+  elements.cameraMenu.hidden = false;
+  elements.registration.classList.add("camera-menu-mode");
+  elements.registration.setAttribute("aria-labelledby", "cameraMenuTitle");
+  showPanel(elements.registration, "camera-menu");
+}
+
+function renderCameraMenuStage() {
+  const stage = state.cameraMenuStage;
+  const mode = stage === "mode";
+  elements.cameraMenuStep.textContent = stage === "mode" ? "Step 1 of 3 · Players"
+    : stage === "pace" ? "Step 2 of 3 · Difficulty" : "Step 3 of 3 · Round time";
+  elements.cameraMenuTitle.textContent = mode ? "Choose how to play"
+    : stage === "pace" ? "Choose a comfortable pace" : "Choose round time";
+  elements.cameraMenuInstruction.textContent = mode
+    ? "For Solo, one person raises a hand. To play together, two people each raise a hand. Hold steady until the choice fills."
+    : stage === "pace"
+      ? "One player raises one hand: left of your face for Gentle, above for Steady, or right for Lively. Hold until the bar fills."
+      : "One player raises one hand: left of your face for 20 seconds, above for 30, or right for 60. Hold until the bar fills.";
+  elements.cameraMenuModeChoices.hidden = !mode;
+  elements.cameraMenuSettingChoices.hidden = mode;
+  elements.cameraMenuSolo.classList.remove("is-active");
+  elements.cameraMenuPvp.classList.remove("is-active");
+  const labels = stage === "duration"
+    ? [["20 sec", "Short"], ["30 sec", "Regular"], ["60 sec", "Long"]]
+    : [["Gentle", "Slow"], ["Steady", "Medium"], ["Lively", "Fast"]];
+  elements.cameraMenuPositions.forEach((element, index) => {
+    element.querySelector("strong").textContent = labels[index][0];
+    element.querySelector("span").textContent = labels[index][1];
+    element.classList.remove("is-active");
+  });
+  elements.cameraMenuMeter.style.width = "0%";
+  elements.cameraMenuStatus.textContent = state.cameraMenuArmed
+    ? mode ? "Waiting for one or two players with raised hands…" : "Raise one hand beside your face to choose."
+    : "Lower all hands briefly before the next choice.";
+  elements.cameraMenuSummary.textContent = mode
+    ? "Choose players → difficulty → time. No mouse is needed."
+    : stage === "pace" ? `${state.playMode === "pvp" ? "2 players" : "Solo"} selected · Choose difficulty next.`
+      : `${state.playMode === "pvp" ? "2 players" : "Solo"} · ${state.pace} pace · Choose time next.`;
+}
+
+function advanceCameraMenuStage(selected, now) {
+  state.cameraMenuCandidate = null;
+  if (state.cameraMenuStage === "mode") {
+    document.querySelector(`input[name="playMode"][value="${selected}"]`).checked = true;
+    configureFromSetup();
+    state.cameraMenuStage = "pace";
+  } else if (state.cameraMenuStage === "pace") {
+    const pace = { left: "gentle", middle: "steady", right: "lively" }[selected];
+    document.querySelector(`input[name="pace"][value="${pace}"]`).checked = true;
+    configureFromSetup();
+    state.cameraMenuStage = "duration";
+  } else {
+    const duration = { left: "20", middle: "30", right: "60" }[selected];
+    document.querySelector(`input[name="duration"][value="${duration}"]`).checked = true;
+    configureFromSetup();
+    elements.cameraMenu.hidden = true;
+    elements.registration.classList.remove("camera-menu-mode");
+    elements.registration.setAttribute("aria-labelledby", "registrationTitle");
+    resetFaceRegistration();
+    setRegistrationCopy();
+    state.registrationStartedAt = now;
+    state.phase = "registering";
+    elements.statusLive.textContent = `${state.playMode === "pvp" ? "Two-player" : "Solo"}, ${state.pace} pace, ${state.durationSeconds} seconds selected. Raise your hands to register.`;
+    return;
+  }
+  state.cameraMenuArmed = false;
+  state.cameraMenuReleaseSince = null;
+  renderCameraMenuStage();
+}
+
 async function startWithCamera() {
+  if (state.starting || state.running) return;
+  clearTimeout(state.kioskRestartTimer);
+  state.kioskRestartTimer = null;
+  state.starting = true;
   configureFromSetup();
   selectTracker();
+  if (tracker instanceof HybridTracker) tracker.unlockPlayers();
+  elements.registration.classList.toggle("camera-kiosk", kioskMode);
   state.inputMode = "camera";
   state.playerFaceSlots = [];
   state.playerPoseIds = [null, null];
@@ -510,6 +755,7 @@ async function startWithCamera() {
   state.registrationMatches = [];
   state.registrationFaceCandidate = null;
   state.registrationFaceLock = null;
+  state.registrationLastFaceAt = 0;
   state.registrationHandCandidates = [null, null];
   state.faceTrackingReady = tracker.faceTrackingReady;
   state.faceTrackingError = "";
@@ -518,18 +764,61 @@ async function startWithCamera() {
   elements.cameraStart.textContent = "Preparing camera…";
   elements.cameraMessage.textContent = "Your browser may ask for camera permission. Images never leave this device.";
   setRegistrationCopy();
+  elements.loadingStatus.textContent = "Starting the camera and tracking model…";
+  elements.loadingCountdown.hidden = true;
+  showPanel(elements.loading, "loading");
+  const loadingStartedAt = performance.now();
   tracker.setFaceTrackingEnabled(true);
   try {
-    await Promise.all([requestCamera(), tracker.initialize()]);
-    showPanel(elements.registration, "registering");
+    // Paint the warning before dynamic model loading starts. Show which half
+    // of startup is still pending instead of an indefinite generic spinner.
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    let cameraReady = false;
+    let modelReady = false;
+    await Promise.all([
+      requestCamera().then(() => {
+        cameraReady = true;
+        if (state.starting && !modelReady) elements.loadingStatus.textContent = "Camera ready. Loading the movement tracker…";
+      }),
+      tracker.initialize().then(() => {
+        modelReady = true;
+        if (state.starting && !cameraReady) elements.loadingStatus.textContent = "Tracker ready. Waiting for the camera…";
+      }),
+    ]);
+    let readTimeRemaining = Math.max(0, MIN_LOADING_READ_MS - (performance.now() - loadingStartedAt));
+    if (readTimeRemaining > 0) {
+      elements.loadingStatus.textContent = "Camera and tracker ready. Please finish reading the notice.";
+      elements.loadingCountdown.hidden = false;
+      while (readTimeRemaining > 0) {
+        elements.loadingCountdown.textContent = `Continuing in ${Math.ceil(readTimeRemaining / 1000)} seconds`;
+        await new Promise((resolve) => setTimeout(resolve, Math.min(1000, readTimeRemaining)));
+        readTimeRemaining = Math.max(0, MIN_LOADING_READ_MS - (performance.now() - loadingStartedAt));
+      }
+      elements.loadingCountdown.hidden = true;
+    }
+    if (kioskMode) showCameraMenu();
+    else showPanel(elements.registration, "registering");
     tracker.start();
-    elements.statusLive.textContent = "Camera ready. Raise your hands to register.";
+    elements.statusLive.textContent = kioskMode
+      ? "Camera ready. Raise hands to choose a game mode."
+      : "Camera ready. Raise your hands to register.";
   } catch (error) {
     stopCamera();
-    showPanel(elements.setup, "setup");
-    elements.cameraMessage.textContent = `${error.message || "The camera could not start."} You can still try solo mode with the keyboard.`;
-    elements.keyboardStart.focus({ preventScroll: true });
+    if (kioskMode) {
+      const detail = String(error?.message || "Camera or tracker unavailable.").slice(0, 160);
+      elements.loadingStatus.textContent = error?.name === "NotAllowedError"
+        ? "A helper needs to allow camera access once in this browser."
+        : `${detail} Trying again shortly…`;
+      if (error?.name !== "NotAllowedError") {
+        state.kioskRestartTimer = setTimeout(() => void startWithCamera(), 5000);
+      }
+    } else {
+      showPanel(elements.setup, "setup");
+      elements.cameraMessage.textContent = `${error.message || "The camera could not start."} You can still try solo mode with the keyboard.`;
+      elements.keyboardStart.focus({ preventScroll: true });
+    }
   } finally {
+    state.starting = false;
     elements.cameraStart.disabled = false;
     elements.cameraStart.textContent = "Continue with camera";
   }
@@ -544,7 +833,8 @@ function lockPlayerSlots(selected, hands) {
     state.playerPoseIds = faces.map((face) => face.personId);
     state.playerHandSides = hands.map((hand) => hand?.side ?? null);
     tracker.lockPlayers(state.playerPoseIds.map((personId, index) =>
-      ({ personId, side: state.playerHandSides[index] })));
+      ({ personId, side: state.playerHandSides[index], bodyX: faces[index].cameraX ?? faces[index].x })),
+    state.playerBoundary);
   }
   state.playerFaceSlots = selected.map(({ slot }) => slot);
 }
@@ -552,17 +842,25 @@ function lockPlayerSlots(selected, hands) {
 function resetFaceRegistration() {
   state.registrationFaceCandidate = null;
   state.registrationFaceLock = null;
+  state.registrationLastFaceAt = 0;
   state.registrationHandCandidates = [null, null];
   state.registrationMatches = [];
 }
 
 function handleRegistration(hands, faces, now) {
   if (isRegistrationLocked(state.phase)) return;
+  if (kioskMode && now - state.registrationStartedAt > 25000) {
+    resetFaceRegistration();
+    showCameraMenu(true);
+    return;
+  }
   const playerCount = activePlayerCount();
   const selected = selectRegistrationFaces(faces, playerCount, now);
   if (selected) state.playerFaceSlots = selected.map(({ slot }) => slot);
   if (!state.faceTrackingReady || !selected) {
-    resetFaceRegistration();
+    if (!state.faceTrackingReady || now - state.registrationLastFaceAt > 750) {
+      resetFaceRegistration();
+    }
     const visibleCount = faces.filter((face) => face && face.interactive !== false
       && now - face.lastSeen <= FACE_FRESH_MS).length;
     setRegistrationStatus(
@@ -575,6 +873,7 @@ function handleRegistration(hands, faces, now) {
     );
     return;
   }
+  state.registrationLastFaceAt = now;
 
   if (state.registrationFaceLock
     && !sameFaceCandidates(state.registrationFaceLock, selected, state.trackerKind)) {
@@ -598,7 +897,9 @@ function handleRegistration(hands, faces, now) {
   const allHandsFound = matches.length === playerCount && matches.every(Boolean);
   state.registrationHandCandidates = state.registrationHandCandidates.map((candidate, index) => {
     const identity = handIdentity(matches[index], state.trackerKind);
-    return identity ? candidate?.identity === identity ? candidate : { identity, since: now } : null;
+    return identity
+      ? candidate?.identity === identity ? { ...candidate, lastSeen: now } : { identity, since: now, lastSeen: now }
+      : candidate && now - candidate.lastSeen <= 650 ? candidate : null;
   });
   if (!allHandsFound) {
     setRegistrationStatus("looking-for-hands", state.trackerKind === "hybrid"
@@ -606,7 +907,7 @@ function handleRegistration(hands, faces, now) {
       : "Step 2: faces locked — raise one hand beside each face", false);
     return;
   }
-  if (state.registrationHandCandidates.some((candidate) => now - candidate.since < HAND_LOCK_MS)) {
+  if (!areHandCandidatesStable(state.registrationHandCandidates, playerCount, now, HAND_LOCK_MS)) {
     setRegistrationStatus("holding-hands", state.trackerKind === "hybrid"
       ? "Step 2: wrists linked — hold your arms there briefly…"
       : "Step 2: hands matched — hold them there briefly…", false);
@@ -641,7 +942,7 @@ function updateRegistrationCountdown(now) {
   elements.countdownValue.textContent = Math.max(1, Math.ceil(remaining / 1000));
   if (remaining <= 0) {
     elements.countdownBadge.hidden = true;
-    startSession("camera");
+    void startSession("camera");
     return;
   }
   state.countdownAnimationId = requestAnimationFrame(updateRegistrationCountdown);
@@ -665,7 +966,27 @@ function cancelRegistration() {
   elements.cameraStart.focus({ preventScroll: true });
 }
 
-function startSession(inputMode) {
+async function startSession(inputMode) {
+  if (inputMode === "camera") {
+    // Registration and play share one video element. There is no second
+    // decoder/play() handoff at the exact moment the countdown ends.
+    if (!state.stream || elements.video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
+      stopCamera();
+      elements.loadingStatus.textContent = "Camera is settling. Reconnecting automatically…";
+      showPanel(elements.loading, "loading");
+      state.gameVideoRetryCount += 1;
+      if (state.gameVideoRetryCount <= 3) {
+        state.kioskRestartTimer = setTimeout(() => void startWithCamera(), 1200);
+      } else if (kioskMode) {
+        elements.loadingStatus.textContent = "The camera is having trouble. Trying again in a few moments…";
+        state.kioskRestartTimer = setTimeout(() => void startWithCamera(), 10000);
+      } else {
+        elements.loadingStatus.textContent = "The camera could not continue. Please ask a helper to check it.";
+      }
+      return;
+    }
+  }
+  state.gameVideoRetryCount = 0;
   configureFromSetup();
   state.running = true;
   state.paused = false;
@@ -678,6 +999,7 @@ function startSession(inputMode) {
   state.startedAt = performance.now();
   state.pausedDuration = 0;
   state.lastFrame = state.startedAt;
+  state.lastStatsAt = state.startedAt;
   state.lastSpawn = state.startedAt - getPaceConfig(state.pace).spawnInterval * 0.55;
   state.objects = [];
   state.missingPlayerSince = [null, null];
@@ -685,23 +1007,28 @@ function startSession(inputMode) {
   state.recoveryMissingPlayers = [];
   state.recoveryStartedAt = 0;
   state.recoveryReadySince = null;
+  state.recoveryCandidate = null;
+  state.extraBodySince = null;
   state.faces = [];
   elements.trackingRecovery.hidden = true;
   elements.pause.disabled = false;
+  elements.play.classList.toggle("camera-kiosk", kioskMode);
   if (inputMode === "keyboard") {
     state.playMode = "solo";
     state.players = [{ x: 0.5, y: 0.72, radius: 44, ownerIndex: 0 }];
   } else {
-    elements.video.play().catch(() => {});
-    tracker.setVideo(elements.video);
+    elements.board.prepend(elements.video);
     tracker.setFaceTrackingEnabled(false);
-    elements.registrationVideo.pause();
   }
 
   elements.targets.replaceChildren();
   showPanel(elements.play, "playing");
   elements.video.hidden = inputMode !== "camera";
   elements.trackingStatus.hidden = inputMode !== "camera";
+  elements.cameraSpaceNotice.hidden = !kioskMode && state.playMode !== "pvp";
+  elements.cameraSpaceNotice.textContent = state.playMode === "pvp"
+    ? "Two players only · Everyone else, please stay outside the camera view"
+    : "Player only · Everyone else, please stay outside the camera view";
   elements.trackingDiagnostics.hidden = inputMode !== "camera" || state.trackerKind !== "hybrid";
   elements.board.classList.toggle("keyboard-mode", inputMode === "keyboard");
   elements.board.classList.toggle("pvp-mode", state.playMode === "pvp");
@@ -799,6 +1126,10 @@ function gameLoop(now) {
     state.animationId = requestAnimationFrame(gameLoop);
     return;
   }
+  if (state.inputMode === "camera" && now - state.lastFrame < CAMERA_GAME_FRAME_MS) {
+    state.animationId = requestAnimationFrame(gameLoop);
+    return;
+  }
 
   const deltaSeconds = Math.min((now - state.lastFrame) / 1000, 0.05);
   state.lastFrame = now;
@@ -820,8 +1151,11 @@ function gameLoop(now) {
   }
   spawnObject(now);
   updateObjects(deltaSeconds, now);
-  updateStats();
-  renderCursors(elements.cursors);
+  if (now - state.lastStatsAt >= STATS_REFRESH_MS) {
+    updateStats();
+    state.lastStatsAt = now;
+  }
+  if (state.inputMode === "keyboard") renderCursors(elements.cursors);
   state.animationId = requestAnimationFrame(gameLoop);
 }
 
@@ -884,6 +1218,7 @@ function resolveObject(object, ownerIndex) {
   const battleLane = state.playMode === "pvp" ? elements.battleLanes[ownerIndex] : null;
 
   if (object.type.hazard) {
+    updateStats();
     const flashTarget = battleLane ?? elements.board;
     const flashClass = battleLane ? "lane-hazard" : "hazard-flash";
     flashTarget.classList.remove(flashClass);
@@ -897,6 +1232,7 @@ function resolveObject(object, ownerIndex) {
 
   current.caught += 1;
   state.caught += 1;
+  updateStats();
   if (battleLane) {
     battleLane.classList.remove("lane-scored");
     void battleLane.offsetWidth;
@@ -909,6 +1245,7 @@ function resolveObject(object, ownerIndex) {
 function missObject(object) {
   removeObject(object);
   state.missed += 1;
+  updateStats();
   const missLimit = getPaceConfig(state.pace).missLimit * (state.playMode === "pvp" ? 2 : 1);
   if (state.missed >= missLimit) endSession("misses");
 }
@@ -991,7 +1328,10 @@ function endSession(reason = "ended") {
   state.running = false;
   state.paused = false;
   cancelAnimationFrame(state.animationId);
-  if (state.inputMode === "camera") stopCamera();
+  if (state.inputMode === "camera") {
+    if (kioskMode) tracker.stop();
+    else stopCamera();
+  }
   state.objects.forEach((object) => object.node.remove());
   state.objects = [];
   state.players = [];
@@ -999,15 +1339,21 @@ function endSession(reason = "ended") {
   state.recoveryActive = false;
   state.recoveryMissingPlayers = [];
   state.recoveryReadySince = null;
+  state.recoveryCandidate = null;
+  state.extraBodySince = null;
   elements.trackingRecovery.hidden = true;
   elements.pause.disabled = false;
   renderCursors(elements.cursors);
 
   showPanel(elements.results, "results");
+  elements.results.classList.toggle("camera-kiosk", kioskMode);
+  elements.resultsKioskStatus.hidden = !kioskMode;
   const scores = state.playerStats.map((player) => player.score);
   const matchResult = getMatchResult(scores[0], scores[1], state.playMode);
-  elements.resultsTitle.textContent = matchResult.title;
-  elements.resultMessage.textContent = reason === "misses"
+  elements.resultsTitle.textContent = reason === "interrupted" ? "Let’s try another round" : matchResult.title;
+  elements.resultMessage.textContent = reason === "interrupted"
+    ? "A player left the camera view, so this round ended to keep player controls safe."
+    : reason === "misses"
     ? `${state.caught} shapes caught. Time for a gentle rest.`
     : matchResult.message;
   elements.finalPlayerOneLabel.textContent = state.playMode === "pvp" ? "Player 1" : "Score";
@@ -1016,7 +1362,34 @@ function endSession(reason = "ended") {
   elements.finalPlayerTwoScore.textContent = scores[1];
   elements.finalCaught.textContent = state.caught;
   elements.statusLive.textContent = `Session complete. ${matchResult.title}`;
-  elements.playAgain.focus({ preventScroll: true });
+  if (kioskMode) {
+    clearTimeout(state.kioskRestartTimer);
+    state.kioskRestartTimer = setTimeout(() => {
+      if (state.phase === "results") returnToCameraMenu();
+    }, 8000);
+  } else {
+    elements.playAgain.focus({ preventScroll: true });
+  }
+}
+
+function returnToCameraMenu() {
+  clearTimeout(state.kioskRestartTimer);
+  state.kioskRestartTimer = null;
+  if (!kioskMode || state.phase !== "results") return;
+  const cameraLive = state.stream?.getVideoTracks().some((track) => track.readyState === "live")
+    && elements.video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA;
+  if (!cameraLive) {
+    stopCamera();
+    void startWithCamera();
+    return;
+  }
+  if (tracker instanceof HybridTracker) tracker.unlockPlayers();
+  tracker.setFaceTrackingEnabled(true);
+  elements.registrationStage.prepend(elements.video);
+  elements.video.hidden = false;
+  showCameraMenu(true);
+  tracker.start();
+  elements.statusLive.textContent = "Camera menu ready. Lower your hands, then choose another session.";
 }
 
 function resetToSetup() {
@@ -1049,7 +1422,10 @@ elements.enterGame.addEventListener("click", () => {
   elements.cameraStart.focus({ preventScroll: true });
 });
 elements.backToWelcome.addEventListener("click", resetToWelcome);
-elements.cameraStart.addEventListener("click", startWithCamera);
+elements.cameraStart.addEventListener("click", () => {
+  state.gameVideoRetryCount = 0;
+  void startWithCamera();
+});
 document.querySelectorAll('input[name="playMode"]').forEach((radio) => {
   radio.addEventListener("change", () => {
     elements.poseTrackerOption.hidden = selectedValue("playMode") !== "pvp";
@@ -1057,17 +1433,48 @@ document.querySelectorAll('input[name="playMode"]').forEach((radio) => {
 });
 elements.keyboardStart.addEventListener("click", () => startSession("keyboard"));
 elements.cancelRegistration.addEventListener("click", cancelRegistration);
+elements.recoveryConfirm.addEventListener("click", () => {
+  const candidate = state.recoveryCandidate;
+  const now = performance.now();
+  if (!state.recoveryActive || !candidate) return;
+  if (now - candidate.at > 400) {
+    elements.recoveryConfirm.disabled = true;
+    elements.recoveryMessage.textContent = "Hold still with both faces and wrists visible, then confirm again.";
+    return;
+  }
+  finishTrackingRecovery(candidate.hands, candidate.selected, candidate.matches, now);
+});
 elements.pause.addEventListener("click", togglePause);
 elements.end.addEventListener("click", () => endSession("ended"));
-elements.playAgain.addEventListener("click", resetToSetup);
-elements.backHome.addEventListener("click", resetToWelcome);
+elements.playAgain.addEventListener("click", () => kioskMode ? returnToCameraMenu() : resetToSetup());
+elements.backHome.addEventListener("click", () => kioskMode ? returnToCameraMenu() : resetToWelcome());
 window.addEventListener("keydown", handleKeyDown);
 window.addEventListener("keyup", (event) => state.keys.delete(event.key.toLowerCase()));
 window.addEventListener("blur", () => state.keys.clear());
 window.addEventListener("beforeunload", () => {
+  clearTimeout(state.kioskRestartTimer);
   stopCamera();
   tracker.dispose();
 });
+
+elements.modeSwitch.textContent = kioskMode ? "Switch to the classic menu" : "Switch to the camera-only menu";
+elements.modeSwitch.href = kioskMode ? "?mode=manual" : window.location.pathname;
+
+if (kioskMode) {
+  document.querySelector('input[name="playMode"][value="pvp"]').checked = true;
+  elements.poseTrackerToggle.checked = true;
+  const pace = pageParams.get("pace");
+  const duration = pageParams.get("duration");
+  if (["gentle", "steady", "lively"].includes(pace)) {
+    document.querySelector(`input[name="pace"][value="${pace}"]`).checked = true;
+  }
+  if (["20", "30", "60"].includes(duration)) {
+    document.querySelector(`input[name="duration"][value="${duration}"]`).checked = true;
+  }
+  void startWithCamera();
+} else {
+  showPanel(elements.landing, "landing");
+}
 
 if (import.meta.env.DEV) {
   window.__gentleCatch = {
@@ -1080,7 +1487,24 @@ if (import.meta.env.DEV) {
     simulateTracking: (hands = [], faces = []) => tracker.onHands(hands, faces),
   };
   const preview = new URLSearchParams(window.location.search).get("preview");
-  if (preview === "face-init") {
+  if (preview === "kiosk-loading") {
+    elements.loadingStatus.textContent = "Starting the camera and tracking model…";
+    showPanel(elements.loading, "loading");
+  } else if (preview === "camera-menu") {
+    state.inputMode = "camera";
+    showCameraMenu();
+  } else if (preview === "camera-menu-pace" || preview === "camera-menu-duration") {
+    state.inputMode = "camera";
+    state.playMode = "pvp";
+    state.pace = "steady";
+    showCameraMenu();
+    state.cameraMenuStage = preview === "camera-menu-pace" ? "pace" : "duration";
+    renderCameraMenuStage();
+  } else if (preview === "kiosk-results") {
+    showPanel(elements.results, "results");
+    elements.results.classList.add("camera-kiosk");
+    elements.resultsKioskStatus.hidden = false;
+  } else if (preview === "face-init") {
     document.querySelector('input[name="playMode"][value="pvp"]').checked = true;
     configureFromSetup();
     state.inputMode = "camera";
@@ -1136,6 +1560,7 @@ if (import.meta.env.DEV) {
     showPanel(elements.play, "playing");
     elements.video.hidden = true;
     elements.trackingStatus.hidden = false;
+    elements.cameraSpaceNotice.hidden = false;
     elements.board.classList.add("keyboard-mode", "pvp-mode");
     elements.play.classList.add("pvp-mode");
     elements.pvpArena.hidden = false;

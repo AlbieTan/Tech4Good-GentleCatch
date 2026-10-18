@@ -1,31 +1,33 @@
-import { FaceTracker } from "./faceTracker.js";
 import { PoseTracker } from "./poseTracker.js";
-import { matchDetectedFacesToPoses } from "./poseTrackingMath.js";
+import { reconcilePoseLocks } from "./poseOwnership.js";
 
-// One continuous PvP inference model: MoveNet MultiPose. The face detector is
-// only active during registration and re-entry, never during gameplay.
+// Keep registration and play on one inference clock. Running a second face
+// worker alongside MoveNet made the two results too sparse to pair on Pi-class
+// hardware, so the pose's nose keypoint is the face-presence check here.
 export class HybridTracker {
   constructor(video, onHands, onStatus) {
     this.onHands = onHands;
     this.onStatus = onStatus;
     this.poseFaces = [];
-    this.detectedFaces = [];
     this.wrists = [];
+    this.assignedWrists = [];
     this.locks = [];
+    this.boundary = 0.5;
     this.poseStatus = null;
-    this.faceStatus = null;
     this.running = false;
     this.faceTrackingEnabled = false;
     this.faceReady = false;
     this.pose = new PoseTracker(video, (_hands, faces, wrists) => {
       this.poseFaces = faces;
       this.wrists = wrists ?? [];
+      if (this.locks.length) {
+        const result = reconcilePoseLocks(this.locks, this.wrists, performance.now(), this.boundary);
+        this.locks = result.locks;
+        this.assignedWrists = result.assigned.filter(Boolean);
+        if (result.rebound.length) this.onStatus({ type: "pose-rebound", changes: result.rebound });
+      }
       this.emit();
     }, (status) => this.handleStatus("pose", status));
-    this.face = new FaceTracker(video, (faces) => {
-      this.detectedFaces = faces;
-      this.emit();
-    }, (status) => this.handleStatus("face", status));
   }
 
   get faceTrackingReady() {
@@ -33,45 +35,45 @@ export class HybridTracker {
   }
 
   async initialize() {
-    await Promise.all([this.pose.initialize(), this.face.initialize()]);
+    await this.pose.initialize();
   }
 
-  handleStatus(source, status) {
-    if (source === "pose" && status.type === "face-ready") return;
-    if (source === "face" && status.type === "face-ready") this.faceReady = true;
-    if (source === "face" && status.type === "face-error") this.faceReady = false;
+  handleStatus(_source, status) {
+    if (status.type === "face-ready") this.faceReady = true;
     if (status.type === "tracking") {
-      if (source === "pose") this.poseStatus = status;
-      else this.faceStatus = status;
+      this.poseStatus = status;
       const now = performance.now();
       const wrists = this.activeWrists(now);
       const faces = this.activeFaces(now);
       this.onStatus({
         type: "tracking",
         faceCount: faces.length,
-        rawFaceCount: this.detectedFaces.filter((face) => face?.interactive).length,
+        rawFaceCount: this.poseFaces.length,
         bodyCount: this.poseStatus?.faceCount ?? 0,
         count: wrists.length,
         fps: this.poseStatus?.fps ?? 0,
+        cameraFps: this.poseStatus?.cameraFps ?? 0,
         inferenceMs: this.poseStatus?.inferenceMs ?? 0,
-        faceInferenceMs: this.faceStatus?.faceInferenceMs ?? 0,
+        frameAgeMs: this.poseStatus?.frameAgeMs ?? 0,
+        cameraWidth: this.poseStatus?.cameraWidth ?? 0,
+        cameraHeight: this.poseStatus?.cameraHeight ?? 0,
+        faceInferenceMs: 0,
         personIds: this.poseStatus?.personIds ?? [],
         matchedCount: faces.filter((face) => wrists.some((wrist) => wrist.personId === face.personId)).length,
       });
-    } else if (status.type !== "ready" || source === "pose") {
+    } else {
       this.onStatus(status);
     }
   }
 
   activeWrists(now = performance.now()) {
-    const lockedSides = new Map(this.locks.map(({ personId, side }) => [personId, side]));
-    return this.wrists.filter((wrist) => now - wrist.lastSeen <= 350
-      && (!this.locks.length || lockedSides.get(wrist.personId) === wrist.side));
+    const source = this.locks.length ? this.assignedWrists : this.wrists;
+    return source.filter((wrist) => now - wrist.lastSeen <= 350);
   }
 
   activeFaces(now = performance.now()) {
     return this.faceTrackingEnabled
-      ? matchDetectedFacesToPoses(this.detectedFaces, this.poseFaces, now)
+      ? this.poseFaces.filter((face) => now - face.lastSeen <= 350)
       : [];
   }
 
@@ -79,47 +81,45 @@ export class HybridTracker {
     this.onHands(this.activeWrists(), this.activeFaces());
   }
 
-  lockPlayers(locks) {
-    this.locks = locks.map((lock) => ({ ...lock }));
+  lockPlayers(locks, boundary = 0.5) {
+    this.boundary = boundary;
+    this.locks = locks.map((lock) => ({ ...lock, lastSeen: performance.now(),
+      candidateId: null, candidateSince: null }));
+    const result = reconcilePoseLocks(this.locks, this.wrists, performance.now(), this.boundary);
+    this.locks = result.locks;
+    this.assignedWrists = result.assigned.filter(Boolean);
   }
 
   unlockPlayers() {
     this.locks = [];
+    this.assignedWrists = [];
   }
 
   setFaceTrackingEnabled(enabled) {
     this.faceTrackingEnabled = Boolean(enabled);
-    if (this.running && this.faceTrackingEnabled) this.face.start();
-    else if (!this.faceTrackingEnabled) {
-      this.detectedFaces = [];
-      this.face.stop();
-    }
   }
 
   setVideo(video) {
     this.pose.setVideo(video);
-    this.face.setVideo(video);
   }
 
   start() {
     this.running = true;
     this.pose.start();
-    if (this.faceTrackingEnabled) this.face.start();
   }
 
   stop() {
     this.running = false;
     this.pose.stop();
-    this.face.stop();
     this.poseFaces = [];
-    this.detectedFaces = [];
     this.wrists = [];
+    this.assignedWrists = [];
   }
 
   dispose() {
     this.stop();
     this.locks = [];
     this.pose.dispose();
-    this.face.dispose();
+    this.faceReady = false;
   }
 }

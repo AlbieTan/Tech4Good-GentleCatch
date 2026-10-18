@@ -28,11 +28,17 @@ export function normalizePosePlayers(poses = [], width, height, timestamp) {
   poses.filter((pose) => (pose.score ?? 0) >= MIN_POSE_SCORE).forEach((pose, index) => {
     const shoulders = [keypoint(pose, "left_shoulder"), keypoint(pose, "right_shoulder")].filter(usable);
     const nose = keypoint(pose, "nose");
+    const headPoints = [nose, keypoint(pose, "left_eye"), keypoint(pose, "right_eye")].filter(usable);
+    const facePoint = usable(nose) ? nose : headPoints.length >= 2
+      ? { x: headPoints.reduce((sum, point) => sum + point.x, 0) / headPoints.length,
+        y: headPoints.reduce((sum, point) => sum + point.y, 0) / headPoints.length,
+        score: Math.min(...headPoints.map((point) => point.score)) }
+      : null;
     const wrists = [keypoint(pose, "left_wrist"), keypoint(pose, "right_wrist")].filter(usable);
     const bodyPoint = shoulders.length
       ? { x: shoulders.reduce((sum, point) => sum + point.x, 0) / shoulders.length,
         y: shoulders.reduce((sum, point) => sum + point.y, 0) / shoulders.length }
-      : nose;
+      : facePoint;
     if (!usable(bodyPoint) && !shoulders.length) return;
 
     const personId = pose.id ?? `untracked-${index}`;
@@ -45,6 +51,8 @@ export function normalizePosePlayers(poses = [], width, height, timestamp) {
           ...mirrored(wrist, width, height),
           personId,
           side,
+          bodyX: body.x,
+          bodyY: body.y,
           shoulderY: usable(shoulder) ? mirrored(shoulder, width, height).y : null,
           confidence: wrist.score,
           lastSeen: timestamp,
@@ -52,14 +60,14 @@ export function normalizePosePlayers(poses = [], width, height, timestamp) {
         });
       }
     }
-    if (usable(nose)) {
-      const position = mirrored(nose, width, height);
+    if (usable(facePoint)) {
+      const position = mirrored(facePoint, width, height);
       faces.push({
         ...position,
         cameraX: body.x,
         width: 0.16,
         height: 0.22,
-        confidence: nose.score,
+        confidence: facePoint.score,
         personId,
         lastSeen: timestamp,
         interactive: true,

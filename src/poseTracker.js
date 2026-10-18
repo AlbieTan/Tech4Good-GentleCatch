@@ -1,6 +1,7 @@
 import { normalizePosePlayers } from "./poseTrackingMath.js";
+import { FASTEST_POSE_INTERVAL_MS, nextPoseIntervalMs } from "./posePerformance.js";
 
-const TARGET_INTERVAL_MS = 1000 / 12;
+// The pose model shares the main thread with the game on Pi-class GPUs.
 
 export class PoseTracker {
   constructor(video, onHands, onStatus) {
@@ -14,9 +15,15 @@ export class PoseTracker {
     this.frameCallbackId = null;
     this.animationId = null;
     this.lastCaptureAt = -Infinity;
+    this.targetIntervalMs = FASTEST_POSE_INTERVAL_MS;
     this.lastVideoTime = -1;
     this.generation = 0;
     this.lastResultAt = 0;
+    this.cameraFps = 0;
+    this.cameraFrames = 0;
+    this.cameraFpsWindowAt = 0;
+    this.lastPresentedFrameCount = null;
+    this.consecutiveErrors = 0;
     this.faceTrackingReady = false;
   }
 
@@ -43,7 +50,7 @@ export class PoseTracker {
         modelUrl,
         enableTracking: true,
         trackerType: poseDetection.TrackerType.Keypoint,
-        multiPoseMaxDimension: 320,
+        multiPoseMaxDimension: 256,
         minPoseScore: 0.35,
       });
       this.faceTrackingReady = true;
@@ -67,6 +74,11 @@ export class PoseTracker {
     this.generation += 1;
     this.lastVideoTime = -1;
     this.lastCaptureAt = -Infinity;
+    this.targetIntervalMs = FASTEST_POSE_INTERVAL_MS;
+    this.cameraFpsWindowAt = 0;
+    this.cameraFrames = 0;
+    this.cameraFps = 0;
+    this.lastPresentedFrameCount = null;
     if (this.running) this.scheduleFrame();
   }
 
@@ -76,6 +88,13 @@ export class PoseTracker {
     this.generation += 1;
     this.lastVideoTime = -1;
     this.lastCaptureAt = -Infinity;
+    this.targetIntervalMs = FASTEST_POSE_INTERVAL_MS;
+    this.cameraFpsWindowAt = 0;
+    this.cameraFrames = 0;
+    this.cameraFps = 0;
+    this.lastPresentedFrameCount = null;
+    this.lastResultAt = 0;
+    this.consecutiveErrors = 0;
     this.scheduleFrame();
   }
 
@@ -98,17 +117,30 @@ export class PoseTracker {
   scheduleFrame() {
     if (!this.running) return;
     if (this.video.requestVideoFrameCallback) {
-      this.frameCallbackId = this.video.requestVideoFrameCallback((now) => this.captureFrame(now));
+      this.frameCallbackId = this.video.requestVideoFrameCallback((now, metadata) => this.captureFrame(now, metadata));
     } else {
       this.animationId = requestAnimationFrame((now) => this.captureFrame(now));
     }
   }
 
-  async captureFrame(now) {
+  async captureFrame(now, metadata) {
     this.frameCallbackId = null;
     this.animationId = null;
+    if (this.running && Number.isFinite(metadata?.presentedFrames)) {
+      if (!this.cameraFpsWindowAt) this.cameraFpsWindowAt = now;
+      if (this.lastPresentedFrameCount !== null) {
+        this.cameraFrames += Math.max(0, metadata.presentedFrames - this.lastPresentedFrameCount);
+      }
+      this.lastPresentedFrameCount = metadata.presentedFrames;
+      const elapsed = now - this.cameraFpsWindowAt;
+      if (elapsed >= 1000) {
+        this.cameraFps = Math.round(this.cameraFrames * 1000 / elapsed);
+        this.cameraFrames = 0;
+        this.cameraFpsWindowAt = now;
+      }
+    }
     if (!this.running || !this.detector || this.inFlight || this.video.readyState < 2
-      || this.video.currentTime === this.lastVideoTime || now - this.lastCaptureAt < TARGET_INTERVAL_MS) {
+      || this.video.currentTime === this.lastVideoTime || now - this.lastCaptureAt < this.targetIntervalMs) {
       this.scheduleFrame();
       return;
     }
@@ -122,7 +154,9 @@ export class PoseTracker {
       const poses = await this.detector.estimatePoses(this.video, null, now);
       if (!this.running || generation !== this.generation) return;
       const result = normalizePosePlayers(poses, this.video.videoWidth, this.video.videoHeight, performance.now());
+      this.consecutiveErrors = 0;
       const resultAt = performance.now();
+      this.targetIntervalMs = nextPoseIntervalMs(resultAt - startedAt);
       const fps = this.lastResultAt ? Math.round(1000 / Math.max(1, resultAt - this.lastResultAt)) : 0;
       this.lastResultAt = resultAt;
       this.onHands(result.hands, result.faces, result.wrists);
@@ -132,12 +166,23 @@ export class PoseTracker {
         faceCount: result.faces.length,
         personIds: result.faces.map((face) => face.personId),
         fps,
+        cameraFps: this.cameraFps,
         inferenceMs: performance.now() - startedAt,
+        frameAgeMs: resultAt - now,
+        cameraWidth: this.video.videoWidth,
+        cameraHeight: this.video.videoHeight,
         backend: "MoveNet WebGL",
       });
     } catch (error) {
       if (generation === this.generation) {
-        this.onStatus({ type: "error", message: error?.message || "Pose detection failed." });
+        this.consecutiveErrors += 1;
+        const message = error?.message || "Pose detection failed.";
+        if (this.consecutiveErrors >= 3) {
+          this.running = false;
+          this.onStatus({ type: "fatal-error", message });
+        } else {
+          this.onStatus({ type: "error", message });
+        }
       }
     } finally {
       this.inFlight = false;
