@@ -25,6 +25,7 @@
 
       <main id="game" class="game-shell">
         <section id="landingPanel" class="landing-panel screen-panel" aria-labelledby="landingTitle" hidden>
+          <h1 id="landingTitle" class="panel-game-name">Gentle Catch</h1>
           <div class="landing-art" aria-hidden="true">
             <span class="float-shape shape-one">✿</span>
             <span class="float-shape shape-two">♥</span>
@@ -33,8 +34,8 @@
           </div>
           <div class="landing-copy">
             <p class="eyebrow">A playful movement break</p>
-            <h1 id="landingTitle">Gentle<br />Catch</h1>
-            <p class="landing-intro">Move, reach and play together. Designed for joyful, low-pressure movement at Precious Active Ageing Centre.</p>
+            <h2 class="landing-message">Move, reach and play together</h2>
+            <p class="landing-intro">A joyful, low-pressure movement game for Precious Active Ageing Centre.</p>
             <button id="enterGame" class="button button-primary button-large" type="button" data-testid="enter-game">
               Let’s get ready <span aria-hidden="true">→</span>
             </button>
@@ -124,16 +125,18 @@
             <img src="/brand/ntu.png" alt="Nanyang Technological University Singapore" />
           </div>
           <h1 class="loading-game-name">Gentle Catch</h1>
-          <h2 id="loadingTitle">Players only in view</h2>
-          <p class="loading-lead">Everyone else, please step out of the camera view until the round ends.</p>
+          <div class="loading-message">
+            <h2 id="loadingTitle">Players only in view</h2>
+            <p class="loading-lead">Everyone else, please step out of the camera view until the round ends.</p>
+          </div>
           <p id="loadingStatus" class="loading-status" role="status">Starting the camera and tracking model…</p>
           <p id="loadingCountdown" class="loading-countdown" aria-hidden="true" hidden></p>
         </section>
 
         <section id="registrationPanel" class="registration-panel screen-panel" aria-labelledby="registrationTitle" hidden>
+          <p class="panel-game-name">Gentle Catch</p>
           <div class="registration-copy">
             <div id="cameraMenu" class="camera-menu" hidden>
-              <p class="camera-menu-brand">Gentle Catch</p>
               <p id="cameraMenuStep" class="eyebrow">Step 1 of 3 · Players</p>
               <h2 id="cameraMenuTitle">Choose how to play</h2>
               <p id="cameraMenuInstruction">Raise one hand for Solo, or one hand each for Together. Hold to choose.</p>
@@ -183,6 +186,11 @@
           <div id="registrationStage" class="registration-stage">
             <video id="registrationVideo" muted playsinline aria-label="Mirrored camera preview for hand registration"></video>
             <div class="camera-soften" aria-hidden="true"></div>
+            <div id="cameraMenuZones" class="camera-menu-zones" aria-hidden="true" hidden>
+              <div class="camera-menu-zone"><span>Left</span></div>
+              <div class="camera-menu-zone"><span>Middle</span></div>
+              <div class="camera-menu-zone"><span>Right</span></div>
+            </div>
             <div class="registration-guide" aria-hidden="true">
               <span class="guide-hand">✋</span>
               <span>Keep faces and hands inside this area</span>

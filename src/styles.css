@@ -53,6 +53,7 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible { outline: 4
   transform: translateY(-160%);
 }
 .skip-link:focus { transform: translateY(0); }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 
 #app {
   height: 100dvh;
@@ -113,12 +114,26 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible { outline: 4
   box-shadow: var(--shadow);
 }
 
+.panel-game-name {
+  position: absolute;
+  z-index: 2;
+  top: clamp(1.2rem, 2.5vw, 2.5rem);
+  left: clamp(1.2rem, 2.5vw, 2.5rem);
+  margin: 0;
+  color: var(--teal-dark);
+  font-family: "Arial Rounded MT Bold", "Trebuchet MS", "Segoe UI", sans-serif;
+  font-size: clamp(1.3rem, 2vw, 1.85rem);
+  font-weight: 900;
+  line-height: 1.1;
+  letter-spacing: -0.04em;
+}
+
 .loading-panel {
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: clamp(0.5rem, 1.5vh, 0.9rem);
+  gap: clamp(1rem, 2.2vh, 2rem);
   padding: clamp(1.2rem, 4vh, 3rem);
   text-align: center;
   overflow: hidden;
@@ -126,19 +141,20 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible { outline: 4
 .loading-brand-logos { display: flex; align-items: center; justify-content: center; gap: 1rem; }
 .loading-brand-logos img { display: block; width: auto; max-width: min(32vw, 11rem); height: clamp(2.2rem, 6vh, 3.6rem); object-fit: contain; }
 .loading-brand-logos span { width: 1px; height: 2.8rem; background: var(--line); }
-.loading-panel .loading-game-name { color: var(--teal-ink); font-size: clamp(2.2rem, 4.5vw, 4rem); line-height: 1; }
-.loading-panel h2 { max-width: 14ch; font-size: clamp(2rem, 4vw, 3.5rem); }
+.loading-game-name { font-size: clamp(2.8rem, 5vw, 4.8rem); }
+.loading-message { display: grid; justify-items: center; gap: clamp(0.65rem, 1.5vh, 1.25rem); margin-top: clamp(0.25rem, 1vh, 0.8rem); }
+.loading-panel h2 { max-width: 18ch; font-size: clamp(1.8rem, 3vw, 2.8rem); }
 .loading-mark { display: grid; width: 5rem; height: 5rem; place-items: center; border-radius: 2rem; color: var(--teal-dark); background: var(--teal-soft); font-size: 2.5rem; }
-.loading-lead { max-width: 34rem; margin: 0; color: var(--teal-ink); font-size: clamp(1.2rem, 2.3vw, 1.8rem); font-weight: 800; line-height: 1.4; }
-.loading-status { min-height: 1.5rem; margin: 0; color: var(--teal-dark); font-weight: 700; }
+.loading-lead { max-width: 38rem; margin: 0; color: var(--teal-ink); font-size: clamp(1.05rem, 1.8vw, 1.45rem); font-weight: 700; line-height: 1.45; }
+.loading-status { min-height: 1.5rem; margin: 0; color: var(--muted); font-size: 0.95rem; font-weight: 700; }
 .loading-countdown { margin: 0; color: var(--pink-dark); font-size: 1.2rem; font-weight: 900; }
 .loading-read-time { margin: 0; color: var(--pink-dark); font-size: 0.9rem; font-weight: 800; }
 .loading-comfort { margin: 0.5rem 0 0; color: var(--muted); }
-.camera-menu { display: grid; align-content: center; gap: clamp(0.45rem, 1.3vh, 0.8rem); height: 100%; }
+.camera-menu { display: grid; align-content: center; justify-items: stretch; gap: clamp(0.5rem, 1.3vh, 0.9rem); height: 100%; padding-top: 2.5rem; text-align: center; }
 .camera-menu p { margin: 0; }
 .camera-menu > p:not(.eyebrow) { color: var(--teal-ink); font-size: 1rem; line-height: 1.35; }
-.camera-menu > p.camera-menu-brand { color: var(--teal-dark); font-family: "Arial Rounded MT Bold", "Trebuchet MS", sans-serif; font-size: clamp(1.8rem, 3vw, 2.7rem); font-weight: 900; line-height: 1; margin-bottom: clamp(0.4rem, 2vh, 1.3rem); }
-.camera-menu h2 { font-size: clamp(2.1rem, 3.5vw, 3.4rem); }
+.registration-copy .camera-menu h2 { width: 100%; max-width: none; margin: 0 0 clamp(0.8rem, 2vh, 1.8rem); font-size: clamp(2.1rem, 3.5vw, 3.4rem); text-align: center; }
+.camera-menu > p#cameraMenuInstruction { max-width: 36ch; justify-self: center; margin-bottom: clamp(0.4rem, 1vh, 0.9rem); line-height: 1.5; }
 .camera-menu-choices { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; }
 .camera-menu-choices-three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .camera-menu-choice { display: grid; gap: 0.2rem; padding: 1rem; border: 3px solid #d8e9e6; border-radius: 1.25rem; background: #f5faf9; }
@@ -159,6 +175,8 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible { outline: 4
 .registration-panel.camera-kiosk.camera-menu-mode { overflow: hidden; }
 .play-panel.camera-kiosk .toolbar-actions { display: none; }
 .play-panel.camera-kiosk .game-board > video { filter: none; }
+.play-panel.camera-kiosk .tracking-status:not(.tracking-alert) { display: none; }
+.play-panel.camera-kiosk .tracking-status.tracking-alert { top: auto; bottom: 1rem; }
 
 .eyebrow { margin: 0 0 0.65rem; color: var(--pink); font-size: 0.84rem; font-weight: 900; letter-spacing: 0.12em; text-transform: uppercase; }
 h1, h2 { margin: 0; color: var(--teal-ink); font-family: "Arial Rounded MT Bold", "Trebuchet MS", "Segoe UI", sans-serif; line-height: 0.98; letter-spacing: -0.04em; }
@@ -196,8 +214,9 @@ h2 { font-size: clamp(2.2rem, 4.5vw, 4rem); font-weight: 900; }
   border-radius: 42% 58% 62% 38%;
   background: var(--pink-soft);
 }
-.landing-copy { max-width: 45rem; position: relative; top: -4rem; z-index: 1; }
-.landing-intro { max-width: 38rem; margin: 1.4rem 0 1.8rem; color: var(--muted); font-size: clamp(1.08rem, 1.55vw, 1.35rem); line-height: 1.55; }
+.landing-copy { max-width: 45rem; position: relative; top: 0; z-index: 1; text-align: center; }
+.landing-message { max-width: 12ch; margin: 0 auto; font-size: clamp(2.6rem, 5vw, 5rem); }
+.landing-intro { max-width: 38rem; margin: 1.4rem auto 1.8rem; color: var(--muted); font-size: clamp(1.08rem, 1.55vw, 1.35rem); line-height: 1.55; }
 .landing-art { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
 .float-shape { position: absolute; display: grid; place-items: center; border-radius: 42%; font-family: Georgia, serif; font-weight: 700; }
 .shape-one { right: 44%; top: 12%; width: 5rem; height: 5rem; color: var(--pink); background: var(--pink-soft); rotate: -8deg; font-size: 2.2rem; }
@@ -328,6 +347,11 @@ legend { margin-bottom: 0.7rem; color: var(--teal-dark); font-size: 1rem; font-w
 .registration-stage { position: relative; min-height: 24rem; height: min(64vh, 43rem); overflow: hidden; contain: paint; border: 8px solid white; border-radius: 2rem; background: var(--teal-soft); box-shadow: var(--shadow); }
 .registration-stage video, .game-board > video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1) translateZ(0); }
 .camera-soften { position: absolute; inset: 0; background: linear-gradient(180deg, rgba(223, 243, 241, 0.12), rgba(255, 249, 243, 0.2)); pointer-events: none; }
+.camera-menu-zones { position: absolute; z-index: 3; top: 0; bottom: 0; left: var(--zone-center, 50%); display: grid; grid-template-columns: repeat(3, 1fr); width: 108%; transform: translateX(-50%); pointer-events: none; }
+.camera-menu-zone { display: flex; justify-content: center; padding-top: 0.8rem; border-right: 3px dashed rgba(255, 255, 255, 0.9); background: rgba(9, 102, 106, 0.04); }
+.camera-menu-zone:first-child { border-left: 3px dashed rgba(255, 255, 255, 0.9); }
+.camera-menu-zone:nth-child(2) { background: rgba(244, 197, 111, 0.1); }
+.camera-menu-zone span { height: fit-content; padding: 0.25rem 0.55rem; border-radius: 99rem; color: white; background: rgba(9, 102, 106, 0.7); font-size: 0.8rem; font-weight: 900; text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2); }
 .registration-guide { position: absolute; inset: 12% 10%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.45rem; border: 3px dashed rgba(255, 255, 255, 0.9); border-radius: 2rem; color: white; background: rgba(11, 102, 106, 0.08); text-shadow: 0 2px 8px rgba(0,0,0,0.25); pointer-events: none; }
 .guide-hand { font-size: clamp(3rem, 7vw, 5rem); }
 .registration-guide span:last-child { font-weight: 800; }
@@ -445,14 +469,12 @@ legend { margin-bottom: 0.7rem; color: var(--teal-dark); font-size: 1rem; font-w
 footer { width: min(calc(100% - 2.5rem), 112rem); margin: 0 auto; padding: 0.38rem 0 0.48rem; display: flex; align-items: center; justify-content: space-between; gap: 1rem; color: var(--muted); font-size: 0.72rem; line-height: 1.2; }
 footer p { margin: 0; }
 footer a { flex: 0 0 auto; color: var(--teal-dark); font-size: 0.85rem; font-weight: 800; text-underline-offset: 0.15em; }
-.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
-
 @media (max-width: 900px) {
   body { overflow: auto; }
   #app { min-height: 100dvh; height: auto; overflow: visible; }
   .game-shell { min-height: 42rem; }
   .landing-panel, .registration-panel { grid-template-columns: 1fr; }
-  .landing-copy { top: 0; padding-top: 1rem; }
+  .landing-copy { top: 0; padding-top: 3rem; }
   .welcome-card { max-width: 42rem; }
   .setup-panel { grid-template-columns: 1fr; grid-template-rows: auto; }
   .setup-heading, .mode-group, .setup-options, .start-card { grid-column: 1; grid-row: auto; }
@@ -495,9 +517,8 @@ footer a { flex: 0 0 auto; color: var(--teal-dark); font-size: 0.85rem; font-wei
 }
 
 @media (max-height: 760px) and (min-width: 901px) {
-  .loading-panel { gap: 0.45rem; padding: 0.7rem 2rem; }
-  .loading-panel h2 { font-size: 3rem; }
-  .loading-panel .loading-game-name { font-size: 2.7rem; }
+  .loading-panel { gap: 1rem; padding: 0.7rem 2rem; }
+  .loading-panel h2 { font-size: 2.35rem; }
   .loading-mark { width: 4rem; height: 4rem; }
   .loading-lead { font-size: 1.25rem; }
   .site-header { padding-block: 0.35rem; }
@@ -505,7 +526,7 @@ footer a { flex: 0 0 auto; color: var(--teal-dark); font-size: 0.85rem; font-wei
   .ntu-logo { height: 2.3rem; }
   .privacy-note { padding-block: 0.4rem; font-size: 0.78rem; }
   .landing-panel, .setup-panel, .registration-panel { padding: 1.2rem 2rem; }
-  .landing-copy { top: -2rem; }
+  .landing-copy { top: 0; }
   .landing-intro { margin-block: 0.8rem 1.2rem; font-size: 1rem; }
   .welcome-card { padding: 1.4rem; }
   .welcome-card ol { gap: 0.55rem; }

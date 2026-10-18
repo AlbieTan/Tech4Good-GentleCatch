@@ -77,6 +77,7 @@ const elements = {
   cameraMenuInstruction: $("#cameraMenuInstruction"),
   cameraMenuModeChoices: $("#cameraMenuModeChoices"),
   cameraMenuSettingChoices: $("#cameraMenuSettingChoices"),
+  cameraMenuZones: $("#cameraMenuZones"),
   cameraMenuSolo: $("#cameraMenuSolo"),
   cameraMenuPvp: $("#cameraMenuPvp"),
   cameraMenuPositions: [$("#cameraMenuLeft"), $("#cameraMenuMiddle"), $("#cameraMenuRight")],
@@ -390,6 +391,7 @@ const handleTrackedPlayers = (hands, faces) => {
     const now = performance.now();
     if (now - state.lastCameraMenuCheck < 80) return;
     state.lastCameraMenuCheck = now;
+    updateCameraMenuZones(hands, faces, now);
     if (!state.cameraMenuArmed) {
       const release = advanceCameraMenuRelease(
         state.cameraMenuReleaseSince, hasRaisedMenuWrist(hands, now, state.trackerKind), now,
@@ -452,6 +454,30 @@ const handleTrackedPlayers = (hands, faces) => {
     renderCursors(elements.cursors);
   }
 };
+
+function updateCameraMenuZones(hands, faces, now) {
+  const guide = elements.cameraMenuZones;
+  if (state.cameraMenuStage === "mode") {
+    guide.hidden = true;
+    return;
+  }
+  const selected = selectRegistrationFaces(faces, state.playMode === "pvp" ? 2 : 1, now);
+  if (!selected) {
+    guide.hidden = true;
+    return;
+  }
+  const matches = associateHandsToFaces(hands, selected, state.trackerKind, now);
+  const ownerIndex = matches.filter(Boolean).length === 1 ? matches.findIndex(Boolean)
+    : selected.length === 1 ? 0 : -1;
+  const faceX = selected[ownerIndex]?.face.x;
+  if (!Number.isFinite(faceX)) {
+    guide.hidden = true;
+    return;
+  }
+  // Menu choices use hand.x - face.x, with boundaries at ±0.18 of camera width.
+  guide.style.setProperty("--zone-center", `${Math.min(100, Math.max(0, faceX * 100))}%`);
+  guide.hidden = false;
+}
 
 const handleTrackerStatus = (status) => {
   if (state.inputMode !== "camera") return;
@@ -538,6 +564,7 @@ const handleTrackerStatus = (status) => {
     } else if (state.recoveryActive) {
       elements.recoveryMessage.textContent = `Tracking paused: ${detail}. Retrying…`;
     } else if (state.phase === "playing") {
+      elements.trackingStatus.classList.add("tracking-alert");
       elements.trackingStatusText.textContent = `Tracking paused: ${detail}. Retrying…`;
     }
     elements.statusLive.textContent = `Player tracking paused: ${detail}.`;
@@ -558,6 +585,7 @@ function selectTracker() {
 function updateTrackingStatus(count) {
   const needed = getRequiredHandCount(state.playMode);
   const ready = count >= needed;
+  elements.trackingStatus.classList.remove("tracking-alert");
   elements.trackingStatus.classList.toggle("hands-ready", ready);
   let message;
   if (state.playMode === "pvp") {
@@ -685,6 +713,7 @@ function showCameraMenu(requireRelease = false) {
 function renderCameraMenuStage() {
   const stage = state.cameraMenuStage;
   const mode = stage === "mode";
+  elements.cameraMenuZones.hidden = true;
   elements.cameraMenuStep.textContent = stage === "mode" ? "Step 1 of 3 · Players"
     : stage === "pace" ? "Step 2 of 3 · Difficulty" : "Step 3 of 3 · Round time";
   elements.cameraMenuTitle.textContent = mode ? "Choose how to play"
@@ -728,6 +757,7 @@ function advanceCameraMenuStage(selected, now) {
     document.querySelector(`input[name="duration"][value="${duration}"]`).checked = true;
     configureFromSetup();
     elements.cameraMenu.hidden = true;
+    elements.cameraMenuZones.hidden = true;
     elements.registration.classList.remove("camera-menu-mode");
     elements.registration.setAttribute("aria-labelledby", "registrationTitle");
     resetFaceRegistration();
@@ -1507,6 +1537,8 @@ if (import.meta.env.DEV) {
     showCameraMenu();
     state.cameraMenuStage = preview === "camera-menu-pace" ? "pace" : "duration";
     renderCameraMenuStage();
+    elements.cameraMenuZones.style.setProperty("--zone-center", "50%");
+    elements.cameraMenuZones.hidden = false;
   } else if (preview === "kiosk-results") {
     showPanel(elements.results, "results");
     elements.results.classList.add("camera-kiosk");
@@ -1565,6 +1597,7 @@ if (import.meta.env.DEV) {
     state.faces = [];
     state.playerFaceSlots = [0, 1];
     showPanel(elements.play, "playing");
+    elements.play.classList.add("camera-kiosk");
     elements.video.hidden = true;
     elements.trackingStatus.hidden = false;
     elements.cameraSpaceNotice.hidden = false;
