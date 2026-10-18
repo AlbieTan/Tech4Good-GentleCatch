@@ -120,13 +120,10 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible { outline: 4
   top: clamp(1.2rem, 2.5vw, 2.5rem);
   left: clamp(1.2rem, 2.5vw, 2.5rem);
   margin: 0;
-  color: var(--teal-dark);
-  font-family: "Arial Rounded MT Bold", "Trebuchet MS", "Segoe UI", sans-serif;
-  font-size: clamp(1.3rem, 2vw, 1.85rem);
-  font-weight: 900;
-  line-height: 1.1;
-  letter-spacing: -0.04em;
+  width: clamp(12rem, 20vw, 18rem);
+  line-height: 0;
 }
+.panel-game-name img { display: block; width: 100%; height: auto; }
 
 .loading-panel {
   display: flex;
@@ -141,7 +138,8 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible { outline: 4
 .loading-brand-logos { display: flex; align-items: center; justify-content: center; gap: 1rem; }
 .loading-brand-logos img { display: block; width: auto; max-width: min(32vw, 11rem); height: clamp(2.2rem, 6vh, 3.6rem); object-fit: contain; }
 .loading-brand-logos span { width: 1px; height: 2.8rem; background: var(--line); }
-.loading-game-name { font-size: clamp(2.8rem, 5vw, 4.8rem); }
+.loading-game-name { width: clamp(18rem, 36vw, 30rem); margin: 0; line-height: 0; }
+.loading-game-name img { display: block; width: 100%; height: auto; }
 .loading-message { display: grid; justify-items: center; gap: clamp(0.65rem, 1.5vh, 1.25rem); margin-top: clamp(0.25rem, 1vh, 0.8rem); }
 .loading-panel h2 { max-width: 18ch; font-size: clamp(1.8rem, 3vw, 2.8rem); }
 .loading-mark { display: grid; width: 5rem; height: 5rem; place-items: center; border-radius: 2rem; color: var(--teal-dark); background: var(--teal-soft); font-size: 2.5rem; }
@@ -496,6 +494,8 @@ footer a { flex: 0 0 auto; color: var(--teal-dark); font-size: 0.85rem; font-wei
   .privacy-note { max-width: 8rem; white-space: normal; font-size: 0.72rem; }
   .game-shell, footer { width: calc(100% - 1rem); }
   .screen-panel { border-radius: 1.5rem; }
+  .panel-game-name { width: min(56vw, 14rem); }
+  .loading-game-name { width: min(76vw, 22rem); }
   .landing-panel, .setup-panel, .registration-panel { padding: 1.25rem; }
   h1 { font-size: clamp(4rem, 22vw, 6.4rem); }
   .landing-panel { gap: 1.5rem; }
