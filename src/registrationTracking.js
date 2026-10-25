@@ -7,11 +7,19 @@ const HAND_FACE_X_LIMIT = 0.38;
 const HAND_FACE_Y_LIMIT = 0.36;
 const AMBIGUOUS_FACE_MARGIN = 0.08;
 
-export function selectRegistrationFaces(faces = [], playerCount = 1, now = performance.now()) {
-  const selected = faces.map((face, slot) => ({ face, slot }))
-    .filter(({ face }) => isFreshDetection(face, now, FACE_FRESH_MS))
-    .sort((a, b) => (a.face.cameraX ?? a.face.x) - (b.face.cameraX ?? b.face.x));
-  if (selected.length !== playerCount) return null;
+export function selectRegistrationFaces(faces = [], playerCount = 1, now = performance.now(), preferredSlots = []) {
+  const visible = faces.map((face, slot) => ({ face, slot }))
+    .filter(({ face }) => isFreshDetection(face, now, FACE_FRESH_MS));
+  // A larger face box is only a 2-D proximity estimate, not a depth reading.
+  // Once menu players have been chosen, keep those slots instead of letting a
+  // newcomer with a larger face take over the next setup step.
+  const selected = preferredSlots.length === playerCount
+    ? preferredSlots.map((slot) => visible.find((entry) => entry.slot === slot))
+    : visible.sort((a, b) =>
+      (b.face.proximity ?? (b.face.width ?? 0.16) * (b.face.height ?? 0.22))
+      - (a.face.proximity ?? (a.face.width ?? 0.16) * (a.face.height ?? 0.22))).slice(0, playerCount);
+  if (selected.length !== playerCount || selected.some((entry) => !entry)) return null;
+  selected.sort((a, b) => (a.face.cameraX ?? a.face.x) - (b.face.cameraX ?? b.face.x));
   if (playerCount === 2 && getPlayerBoundary(selected.map(({ face }) => face)) === null) return null;
   return selected;
 }
@@ -44,9 +52,12 @@ function handFaceDistance(hand, face) {
   return Math.hypot(hand.x - face.x, hand.y - face.y);
 }
 
-export function associateHandsToFaces(hands = [], selectedFaces = [], trackerKind = "hand", now = performance.now()) {
+export function associateHandsToFaces(hands = [], selectedFaces = [], trackerKind = "hand", now = performance.now(), allFaces = []) {
   if (!selectedFaces.length) return [];
   const faces = selectedFaces.map(({ face }) => face);
+  const selectedSlots = new Set(selectedFaces.map(({ slot }) => slot));
+  const ignoredFaces = allFaces.map((face, slot) => ({ face, slot }))
+    .filter(({ face, slot }) => !selectedSlots.has(slot) && isFreshDetection(face, now, FACE_FRESH_MS));
   const boundary = faces.length === 2 ? getPlayerBoundary(faces) : null;
   const matches = Array(selectedFaces.length).fill(null);
   const candidates = [];
@@ -72,6 +83,10 @@ export function associateHandsToFaces(hands = [], selectedFaces = [], trackerKin
         && Math.abs(dy) <= (face.height ?? 0.24) / 2 + 0.015) return;
       if (trackerKind !== "hybrid" && distances.some((distance, index) =>
         index !== ownerIndex && distance <= distances[ownerIndex] + AMBIGUOUS_FACE_MARGIN)) return;
+      if (trackerKind === "hybrid" && ignoredFaces.some(({ face: ignored }) =>
+        ignored.personId === hand.personId)) return;
+      if (trackerKind !== "hybrid" && ignoredFaces.some(({ face: ignored }) =>
+        handFaceDistance(hand, ignored) <= distances[ownerIndex] + AMBIGUOUS_FACE_MARGIN)) return;
       candidates.push({ hand, ownerIndex, slot, distance: distances[ownerIndex] });
     });
   });

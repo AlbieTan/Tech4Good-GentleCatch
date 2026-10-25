@@ -67,6 +67,9 @@ export function normalizePosePlayers(poses = [], width, height, timestamp) {
         cameraX: body.x,
         width: 0.16,
         height: 0.22,
+        // Apparent shoulder span is a rough proximity cue for pose-first mode.
+        proximity: shoulders.length === 2
+          ? Math.abs(shoulders[0].x - shoulders[1].x) / width : 0,
         confidence: facePoint.score,
         personId,
         lastSeen: timestamp,

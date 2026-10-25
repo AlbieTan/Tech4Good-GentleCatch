@@ -7,20 +7,20 @@ export const CAMERA_MENU_RELEASE_MS = 450;
 // One raised hand chooses Solo; two separate people with a hand each choose
 // Together. No face images or persistent identities are involved.
 export function getCameraMenuChoice(hands = [], faces = [], now = performance.now(), trackerKind = "hybrid") {
-  const visible = faces.filter((face) => face?.interactive !== false
-    && Number.isFinite(face?.lastSeen) && now - face.lastSeen <= FACE_FRESH_MS);
-  if (visible.length !== 1 && visible.length !== 2) return null;
-  const selected = selectRegistrationFaces(visible, visible.length, now);
-  if (!selected) return null;
-  const matches = associateHandsToFaces(hands, selected, trackerKind, now);
-  return matches.length === visible.length && matches.every(Boolean)
-    ? visible.length === 2 ? "pvp" : "solo"
-    : null;
+  const pair = selectRegistrationFaces(faces, 2, now);
+  if (pair) {
+    const matches = associateHandsToFaces(hands, pair, trackerKind, now, faces);
+    if (matches.every(Boolean)) return "pvp";
+  }
+  const solo = selectRegistrationFaces(faces, 1, now);
+  return solo && associateHandsToFaces(hands, solo, trackerKind, now, faces)[0]
+    ? "solo" : null;
 }
 
-export function advanceCameraMenu(candidate, choice, now, holdMs = CAMERA_MENU_HOLD_MS) {
+export function advanceCameraMenu(candidate, choice, now, holdMs = CAMERA_MENU_HOLD_MS, identity = "") {
   if (!choice) return { candidate: null, progress: 0, selected: null };
-  const next = candidate?.choice === choice ? candidate : { choice, since: now };
+  const next = candidate?.choice === choice && candidate.identity === identity
+    ? candidate : { choice, identity, since: now };
   const progress = Math.min(1, Math.max(0, now - next.since) / holdMs);
   return { candidate: next, progress, selected: progress >= 1 ? choice : null };
 }
@@ -28,18 +28,22 @@ export function advanceCameraMenu(candidate, choice, now, holdMs = CAMERA_MENU_H
 // Either player can choose a setting with one raised hand. Its position
 // relative to that person's face selects the left, middle or right card.
 export function getCameraSettingChoice(hands = [], faces = [], playerCount = 1,
-  now = performance.now(), trackerKind = "hybrid") {
-  const selected = selectRegistrationFaces(faces, playerCount, now);
+  now = performance.now(), trackerKind = "hybrid", preferredSlots = []) {
+  const selected = selectRegistrationFaces(faces, playerCount, now, preferredSlots);
   if (!selected) return null;
-  const matches = associateHandsToFaces(hands, selected, trackerKind, now);
+  const matches = associateHandsToFaces(hands, selected, trackerKind, now, faces);
   if (matches.filter(Boolean).length !== 1) return null;
   const ownerIndex = matches.findIndex(Boolean);
   const offset = matches[ownerIndex].x - selected[ownerIndex].face.x;
   return offset < -0.18 ? "left" : offset > 0.18 ? "right" : "middle";
 }
 
-export function hasRaisedMenuWrist(hands = [], now = performance.now(), trackerKind = "hybrid") {
-  return hands.some((hand) => hand?.interactive !== false
+export function hasRaisedMenuWrist(hands = [], now = performance.now(), trackerKind = "hybrid",
+  faces = [], playerCount = 0, preferredSlots = []) {
+  const selected = playerCount ? selectRegistrationFaces(faces, playerCount, now, preferredSlots) : null;
+  const relevantHands = selected ? associateHandsToFaces(hands, selected, trackerKind, now, faces).filter(Boolean)
+    : playerCount ? [] : hands;
+  return relevantHands.some((hand) => hand?.interactive !== false
     && Number.isFinite(hand?.lastSeen) && now - hand.lastSeen <= FACE_FRESH_MS
     && (trackerKind === "hand" || ((hand.confidence ?? 0) >= 0.38
       && Number.isFinite(hand.shoulderY) && hand.y <= hand.shoulderY + 0.15)));

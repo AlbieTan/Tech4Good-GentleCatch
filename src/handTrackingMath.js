@@ -10,7 +10,7 @@ const SPEED_COEFFICIENT = 2;
 const DERIVATIVE_CUTOFF = 3;
 const MAX_PREDICTION_MS = 45;
 const MAX_PREDICTION_DISTANCE = 0.075;
-const MAX_FACES = 2;
+export const MAX_FACES = 6;
 const FACE_TRACKING_GRACE_MS = 550;
 const FACE_HOLD_MS = 1100;
 
@@ -238,7 +238,9 @@ export function updateFaceSlots(previousSlots = [], detections = [], timestamp) 
     const previous = previousSlots[index];
     return previous ? { ...previous, visible: false } : null;
   });
-  const normalized = detections.slice(0, MAX_FACES).map((face) => ({
+  const normalized = [...detections]
+    .sort((a, b) => b.width * b.height - a.width * a.height)
+    .slice(0, MAX_FACES).map((face) => ({
     ...face,
     x: clamp(1 - face.x, 0.02, 0.98),
     y: clamp(face.y, 0.02, 0.98),
@@ -249,36 +251,25 @@ export function updateFaceSlots(previousSlots = [], detections = [], timestamp) 
     .map((slot, index) => ({ slot, index }))
     .filter(({ slot }) => slot && timestamp - slot.lastSeen <= FACE_HOLD_MS);
 
-  if (!activeSlots.length) {
-    normalized.sort((first, second) => first.x - second.x).forEach((face, index) => {
-      slots[index] = updateFaceSlot(null, face, timestamp);
-    });
-  } else if (normalized.length === 2 && activeSlots.length === 2) {
-    const predicted = activeSlots.map(({ slot }) => predictedFacePosition(slot, timestamp));
-    const directCost = distance(predicted[0], normalized[0]) + distance(predicted[1], normalized[1]);
-    const swappedCost = distance(predicted[0], normalized[1]) + distance(predicted[1], normalized[0]);
-    const ordered = directCost <= swappedCost ? normalized : [normalized[1], normalized[0]];
-    activeSlots.forEach(({ slot, index }, orderIndex) => {
-      slots[index] = updateFaceSlot(slot, ordered[orderIndex], timestamp);
-    });
-  } else {
-    const availableSlots = new Set([0, 1]);
-    normalized.forEach((face) => {
-      let bestIndex = -1;
-      let bestDistance = Infinity;
-      slots.forEach((slot, index) => {
-        if (!slot || !availableSlots.has(index) || timestamp - slot.lastSeen > FACE_HOLD_MS) return;
-        const candidateDistance = distance(predictedFacePosition(slot, timestamp), face);
-        if (candidateDistance < bestDistance) {
-          bestDistance = candidateDistance;
-          bestIndex = index;
-        }
-      });
-      if (bestIndex < 0) bestIndex = [...availableSlots][0];
-      slots[bestIndex] = updateFaceSlot(slots[bestIndex], face, timestamp);
-      availableSlots.delete(bestIndex);
-    });
+  if (!activeSlots.length) normalized.sort((a, b) => a.x - b.x);
+
+  const pairs = activeSlots.flatMap(({ slot, index }) => normalized.map((face, faceIndex) => ({
+    index, faceIndex, cost: distance(predictedFacePosition(slot, timestamp), face)
+      + Math.abs(Math.log((face.width * face.height) / (slot.width * slot.height))) * 0.04,
+  }))).filter(({ cost }) => cost < 0.26).sort((a, b) => a.cost - b.cost);
+  const usedSlots = new Set();
+  const usedFaces = new Set();
+  for (const { index, faceIndex } of pairs) {
+    if (usedSlots.has(index) || usedFaces.has(faceIndex)) continue;
+    slots[index] = updateFaceSlot(slots[index], normalized[faceIndex], timestamp);
+    usedSlots.add(index);
+    usedFaces.add(faceIndex);
   }
+  normalized.forEach((face, faceIndex) => {
+    if (usedFaces.has(faceIndex)) return;
+    const index = slots.findIndex((slot) => !slot || timestamp - slot.lastSeen > FACE_HOLD_MS);
+    if (index >= 0) slots[index] = updateFaceSlot(null, face, timestamp);
+  });
 
   return slots.map((slot) => {
     if (!slot) return null;

@@ -1,4 +1,5 @@
 import {
+  MAX_FACES,
   MAX_HANDS,
   presentFaceSlots,
   presentHandSlots,
@@ -35,7 +36,7 @@ export class HandTracker {
     this.trackingFps = 0;
     this.slots = Array(MAX_HANDS).fill(null);
     this.presentedSlots = Array(MAX_HANDS).fill(null);
-    this.faceSlots = [null, null];
+    this.faceSlots = Array(MAX_FACES).fill(null);
     this.faceTrackingEnabled = false;
     this.faceTrackingReady = false;
     this.generation = 0;
@@ -126,7 +127,7 @@ export class HandTracker {
     this.trackingFps = 0;
     this.slots = Array(MAX_HANDS).fill(null);
     this.presentedSlots = Array(MAX_HANDS).fill(null);
-    this.faceSlots = [null, null];
+    this.faceSlots = Array(MAX_FACES).fill(null);
     this.lastCaptureTime = -Infinity;
     this.lastFaceCaptureTime = -Infinity;
     this.lastPresentationTime = performance.now();
@@ -137,7 +138,7 @@ export class HandTracker {
   setFaceTrackingEnabled(enabled) {
     this.faceTrackingEnabled = Boolean(enabled);
     this.lastFaceCaptureTime = -Infinity;
-    if (!this.faceTrackingEnabled) this.faceSlots = [null, null];
+    if (!this.faceTrackingEnabled) this.faceSlots = Array(MAX_FACES).fill(null);
     this.worker?.postMessage({ type: "SET_FACE_TRACKING", enabled: this.faceTrackingEnabled });
   }
 
@@ -174,7 +175,7 @@ export class HandTracker {
     this.presentationAnimationId = null;
     this.slots = Array(MAX_HANDS).fill(null);
     this.presentedSlots = Array(MAX_HANDS).fill(null);
-    this.faceSlots = [null, null];
+    this.faceSlots = Array(MAX_FACES).fill(null);
     this.lastResultTime = 0;
     this.trackingFps = 0;
     this.onHands([], []);

@@ -50,7 +50,9 @@ There is **no cloud vision API**. The app uses browser camera access (`getUserMe
 | Default kiosk and normal classic camera play | [MediaPipe Tasks Vision](https://ai.google.dev/edge/mediapipe/solutions/vision/hand_landmarker/web_js) **Hand Landmarker** plus **Face Detector** | Palm landmarks control the cursor. Face detection supports menu choices, player registration and classic-menu re-entry checks. Tracking runs in a Web Worker; it tries GPU for hands, then falls back to CPU. |
 | Optional classic-menu PvP beta | [TensorFlow.js MoveNet MultiPose](https://github.com/tensorflow/tfjs-models/tree/master/pose-detection) on WebGL | Associates a pose's nose, torso and wrist for each player. It is a comparison path and may be slower or unavailable on a Raspberry Pi. |
 
-The face check is **positional tracking, not facial recognition or biometric identity verification**. It does not know whether a returning person is the same individual. In the kiosk, a player missing for roughly 1.8 seconds ends the round rather than allowing a new person to inherit their controls. In the classic menu, the game can pause for positional re-entry checks; the pose-first beta additionally asks for manual same-player confirmation. Normal palm-tracked gameplay turns face detection off to save work, so an extra person cannot be reliably detected throughout a round. Keep bystanders outside the camera view.
+When several people appear during setup, the palm path estimates proximity from face-box size and considers only the largest face for Solo or the two largest separated faces for Together. The pose-first beta uses apparent shoulder span instead. Once chosen in the kiosk menu, those face slots are retained through the remaining choices and registration; hands closer to an ignored face are rejected. These are **2-D estimates, not true depth measurements**.
+
+The face check is **positional tracking, not facial recognition or biometric identity verification**. It does not know whether a returning person is the same individual. In the kiosk, a player missing for roughly 1.8 seconds ends the round rather than allowing a new person to inherit their controls. In the classic menu, the game can pause for positional re-entry checks; the pose-first beta additionally asks for manual same-player confirmation. Normal palm-tracked gameplay turns face detection off to save work, so an extra person cannot be reliably detected or locked out throughout a round. Keep bystanders outside the camera view.
 
 For performance, the kiosk requests approximately **640 × 360** camera frames, downsamples hand inference to **384 × 216**, and caps palm inference at **30 FPS**. Face checks run at most **8 FPS** during setup and recovery. The game loop is capped at 30 updates per second, and inference frames are not queued while the worker is busy. These are **ceilings, not guaranteed frame rates**. Real FPS depends on browser, lighting, camera, thermals and hardware.
 
@@ -83,7 +85,7 @@ The `?preview=...` routes used to make the screenshots above are development-onl
 2. Clone this branch on the Pi and build it, or build on another computer and copy the resulting `dist/` directory to the Pi:
 
    ```bash
-   git clone --branch v8-gentlecatch-branding https://github.com/AlbieTan/Tech4Good-GentleCatch.git
+   git clone --branch v9-final-debugging-edits https://github.com/AlbieTan/Tech4Good-GentleCatch.git
    cd Tech4Good-GentleCatch
    npm ci
    npm run build

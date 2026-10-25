@@ -19,13 +19,14 @@ describe("camera-only menu", () => {
     expect(getCameraMenuChoice([wrist(0.47, 1, now)], [face(0.3, 1, now)], now)).toBe("solo");
   });
 
-  it("requires both players and refuses a third person", () => {
+  it("lets the two nearest people play while ignoring a smaller third face", () => {
     const now = 1000;
     const faces = [face(0.25, 1, now), face(0.75, 2, now)];
     const wrists = [wrist(0.4, 1, now), wrist(0.6, 2, now)];
-    expect(getCameraMenuChoice(wrists.slice(0, 1), faces, now)).toBeNull();
+    expect(getCameraMenuChoice(wrists.slice(0, 1), faces, now)).toBe("solo");
     expect(getCameraMenuChoice(wrists, faces, now)).toBe("pvp");
-    expect(getCameraMenuChoice(wrists, [...faces, face(0.95, 3, now)], now)).toBeNull();
+    expect(getCameraMenuChoice(wrists, [...faces, { ...face(0.95, 3, now), width: 0.08, height: 0.1 }], now))
+      .toBe("pvp");
   });
 
   it("resets the dwell when the gesture changes or disappears", () => {
@@ -34,6 +35,7 @@ describe("camera-only menu", () => {
     expect(advanceCameraMenu(first.candidate, null, 1100).candidate).toBeNull();
     expect(advanceCameraMenu(first.candidate, "pvp", 1400).selected).toBeNull();
     expect(advanceCameraMenu(first.candidate, "solo", 1300).selected).toBe("solo");
+    expect(advanceCameraMenu(first.candidate, "solo", 1300, 1200, "new-face").selected).toBeNull();
   });
 
   it("uses one player's wrist position to choose a setting", () => {
@@ -44,12 +46,13 @@ describe("camera-only menu", () => {
     expect(getCameraSettingChoice([wrist(0.75, 1, now)], [player], 1, now)).toBe("right");
   });
 
-  it("rejects ambiguous two-player setting gestures and extra people", () => {
+  it("rejects ambiguous two-player setting gestures but ignores a smaller bystander", () => {
     const now = 1000;
     const faces = [face(0.25, 1, now), face(0.75, 2, now)];
     expect(getCameraSettingChoice([wrist(0.4, 1, now)], faces, 2, now)).toBe("middle");
     expect(getCameraSettingChoice([wrist(0.4, 1, now), wrist(0.6, 2, now)], faces, 2, now)).toBeNull();
-    expect(getCameraSettingChoice([wrist(0.4, 1, now)], [...faces, face(0.95, 3, now)], 2, now)).toBeNull();
+    expect(getCameraSettingChoice([wrist(0.4, 1, now)],
+      [...faces, { ...face(0.95, 3, now), width: 0.08, height: 0.1 }], 2, now)).toBe("middle");
   });
 
   it("waits for hands to lower before arming the next step", () => {

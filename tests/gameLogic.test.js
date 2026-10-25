@@ -304,6 +304,19 @@ describe("hand tracking helpers", () => {
     expect(reordered[1].x).toBeGreaterThan(0.7);
   });
 
+  it("tracks a third face without replacing the two existing slots", () => {
+    const large = { y: 0.3, width: 0.2, height: 0.3 };
+    const initial = updateFaceSlots([], [{ ...large, x: 0.8 }, { ...large, x: 0.2 }], 1000);
+    const next = updateFaceSlots(initial, [
+      { ...large, x: 0.19 },
+      { ...large, x: 0.81 },
+      { x: 0.5, y: 0.3, width: 0.3, height: 0.35 },
+    ], 1130);
+    expect(next[0].x).toBeLessThan(0.3);
+    expect(next[1].x).toBeGreaterThan(0.7);
+    expect(next[2]?.x).toBeCloseTo(0.5);
+  });
+
   it("holds a face identity through a short detector dropout", () => {
     const slots = [{ x: 0.25, y: 0.3, width: 0.2, height: 0.3, lastSeen: 1000, visible: false }, null];
     expect(presentFaceSlots(slots, 1450)[0]).toMatchObject({ x: 0.25, interactive: true });
@@ -421,6 +434,36 @@ describe("face-first registration", () => {
     expect(selectRegistrationFaces([face(0.72, 2), face(0.28, 1)], 2, 1010)
       .map(({ face: detected }) => detected.personId)).toEqual([1, 2]);
     expect(selectRegistrationFaces([face(0.28, 1)], 1, 1400)).toBeNull();
+  });
+
+  it("selects the largest faces, then preserves chosen slots when a larger newcomer enters", () => {
+    const faces = [
+      { ...face(0.2, 1), width: 0.24, height: 0.28 },
+      { ...face(0.8, 2), width: 0.2, height: 0.24 },
+      { ...face(0.5, 3), width: 0.08, height: 0.1 },
+    ];
+    expect(selectRegistrationFaces(faces, 1, 1010).map(({ slot }) => slot)).toEqual([0]);
+    expect(selectRegistrationFaces(faces, 2, 1010).map(({ slot }) => slot)).toEqual([0, 1]);
+    faces[2] = { ...faces[2], width: 0.3, height: 0.35 };
+    expect(selectRegistrationFaces(faces, 2, 1010, [0, 1]).map(({ slot }) => slot)).toEqual([0, 1]);
+    expect(selectRegistrationFaces([null, faces[1], faces[2]], 2, 1010, [0, 1])).toBeNull();
+  });
+
+  it("uses apparent shoulder span as the pose-first proximity cue", () => {
+    const faces = [
+      { ...face(0.2, 1), proximity: 0.12 },
+      { ...face(0.8, 2), proximity: 0.22 },
+    ];
+    expect(selectRegistrationFaces(faces, 1, 1010)[0].face.personId).toBe(2);
+  });
+
+  it("does not assign an ignored person's closer hand to a selected player", () => {
+    const faces = [
+      { ...face(0.28, 1), width: 0.24, height: 0.28 },
+      { ...face(0.6, 2), width: 0.08, height: 0.1 },
+    ];
+    const selected = selectRegistrationFaces(faces, 1, 1010);
+    expect(associateHandsToFaces([hand(0.48)], selected, "hand", 1010, faces)).toEqual([null]);
   });
 
   it("keeps the face stage stable before accepting a hand", () => {
