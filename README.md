@@ -119,4 +119,4 @@ Do not use a browser flag that silently grants camera access to every site. Keep
 
 ## Credits
 
-Built on [Hakrrrm's initial v1 Tech4Good prototype](https://github.com/Hakrrrm/tech4good). [AlbieTan](https://github.com/AlbieTan) developed the later UI, kiosk and two-player versions. Precious Active Ageing Centre and NTU branding appears in the game. See [third-party notices](THIRD_PARTY_NOTICES.md) for model and library attribution.
+Built on [Hakrrrm's initial Tech4Good prototype](https://github.com/Hakrrrm/tech4good). [AlbieTan](https://github.com/AlbieTan) developed the later UI, kiosk and two-player versions. Precious Active Ageing Centre and NTU branding appears in the game. See [third-party notices](THIRD_PARTY_NOTICES.md) for model and library attribution.
