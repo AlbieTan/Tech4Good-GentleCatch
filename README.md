@@ -79,7 +79,7 @@ The `?preview=...` routes used to make the screenshots above are development-onl
 
 ## Deploy on a Raspberry Pi
 
-**Pi 5 is preferred**, particularly for two-player play. A Pi 4 may struggle with sustained tracking; neither board has been release-validated for this project yet. Test the complete session on the actual board before using it with participants.
+**Pi 5 is preferred**, particularly for two-player play. A Pi 4 may struggle with sustained tracking. The camera and kiosk startup have been tested on a Pi 5 with a Logitech C920; sustained solo and PvP frame rates still need a full-session check on the target board.
 
 1. Install **Raspberry Pi OS 64-bit with Desktop**, a suitable power supply, Chromium, and a UVC-compatible webcam. Use a current Node.js version meeting the requirement above if building on the Pi.
 2. Clone this branch on the Pi and build it, or build on another computer and copy the resulting `dist/` directory to the Pi:
@@ -92,8 +92,8 @@ The `?preview=...` routes used to make the screenshots above are development-onl
    python3 -m http.server 8000 --bind 127.0.0.1 --directory dist
    ```
 
-3. In a persistent Chromium profile, visit `http://127.0.0.1:8000/` and **allow camera access once with staff present**. Then test a full solo and two-player session.
-4. Configure the static server to start before Chromium and to restart on failure. Launch Chromium in kiosk mode at the same loopback URL. Follow the [official Raspberry Pi kiosk tutorial](https://www.raspberrypi.com/tutorials/how-to-use-a-raspberry-pi-in-kiosk-mode/) for the installed desktop's autostart method. Our [Pi-specific guide](docs/raspberry-pi-kiosk.md) has an installation outline and safety checks.
+3. Allow camera access for the localhost game through Chromium policy. On the tested Pi 5, Chromium's PipeWire camera path hung while listing devices even though the C920 worked with `v4l2-ctl`. Launching Chromium with `--disable-features=WebRtcPipeWireCamera` made the browser detect the C920 and play 640 × 360 video. The included [`pi/start-kiosk.sh`](pi/start-kiosk.sh) applies that device-specific setting.
+4. Configure the included user service to start the static server before Chromium and restart it on failure. Launch Chromium in kiosk mode at the same loopback URL. Follow the [official Raspberry Pi kiosk tutorial](https://www.raspberrypi.com/tutorials/how-to-use-a-raspberry-pi-in-kiosk-mode/) for the installed desktop's autostart method. The [Pi-specific guide](docs/raspberry-pi-kiosk.md) has the terminal commands, camera policy and recovery checks.
 5. Cold-reboot the Pi and verify that the browser opens, camera permission persists, the menu works without a mouse, both players remain tracked, and results return to the menu.
 
 Do not use a browser flag that silently grants camera access to every site. Keep a staff-accessible way to exit kiosk mode or stop the Pi; the game UI is not an emergency stop.
@@ -114,7 +114,7 @@ Do not use a browser flag that silently grants camera access to every site. Keep
 - **Selection bar not filling:** lower all hands briefly after the previous choice, then show only one hand beside a visible face. Keep the hand in one zone. A detection dropout currently resets the 1.2-second hold.
 - **Tracking lags:** improve light, avoid backlighting, close other tabs and camera apps, and check the on-screen tracker FPS/inference time. The Pi 5 is the recommended starting point for PvP; Pi 4 PvP is unverified.
 - **Two players swap or cannot register:** stand farther apart, keep hands on your own sides, avoid crossing the middle, and keep bystanders out of view. The app uses position, not biometric identity.
-- **No camera:** confirm the browser has permission for the exact localhost origin, the webcam is connected and unused by another app, and Chromium is running on the Pi desktop.
+- **No camera:** confirm the browser has permission for the exact localhost origin, the webcam is connected and unused by another app, and Chromium is running on the Pi desktop. If a Pi 5 with a USB webcam stays at “Waiting for the camera”, try the direct V4L2 launch in the [Pi guide](docs/raspberry-pi-kiosk.md); a successful command-line webcam test alone does not prove Chromium can enumerate it.
 - **Browser works on desktop but not Pi:** confirm a 64-bit OS, current Chromium, local model/WASM files in `dist/`, sufficient power and cooling, and that the static server is reachable before Chromium launches.
 
 ## Credits

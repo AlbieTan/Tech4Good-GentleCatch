@@ -1,0 +1,12 @@
+[Unit]
+Description=GentleCatch local kiosk web server
+
+[Service]
+Type=simple
+WorkingDirectory=%h/gentle-catch
+ExecStart=/usr/bin/python3 -m http.server 8000 --bind 127.0.0.1 --directory %h/gentle-catch/dist
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target
