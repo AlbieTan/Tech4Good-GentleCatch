@@ -3,6 +3,7 @@ import { associateHandsToFaces, selectRegistrationFaces } from "./registrationTr
 
 export const CAMERA_MENU_HOLD_MS = 1200;
 export const CAMERA_MENU_RELEASE_MS = 450;
+export const CAMERA_MENU_DROPOUT_MS = 450;
 
 // One raised hand chooses Solo; two separate people with a hand each choose
 // Together. No face images or persistent identities are involved.
@@ -17,10 +18,27 @@ export function getCameraMenuChoice(hands = [], faces = [], now = performance.no
     ? "solo" : null;
 }
 
+export function stabilizeCameraMenuChoice(candidate, choice) {
+  // Wait through a brief second-hand dropout instead of replacing a pending
+  // Together choice with Solo. The dropout timer handles a sustained absence.
+  return candidate?.choice === "pvp" && choice === "solo" ? null : choice;
+}
+
 export function advanceCameraMenu(candidate, choice, now, holdMs = CAMERA_MENU_HOLD_MS, identity = "") {
-  if (!choice) return { candidate: null, progress: 0, selected: null };
-  const next = candidate?.choice === choice && candidate.identity === identity
-    ? candidate : { choice, identity, since: now };
+  const expired = candidate?.choice === "pvp" && now - candidate.lastSeen > CAMERA_MENU_DROPOUT_MS;
+  if (!choice) {
+    if (candidate?.choice !== "pvp" || expired) {
+      return { candidate: null, progress: 0, selected: null };
+    }
+    const paused = { ...candidate, missingSince: candidate.missingSince ?? now };
+    return { candidate: paused,
+      progress: Math.min(1, (candidate.lastSeen - candidate.since) / holdMs),
+      selected: null };
+  }
+  const next = !expired && candidate?.choice === choice && candidate.identity === identity
+    ? { ...candidate, since: candidate.since + (candidate.missingSince == null ? 0 : now - candidate.lastSeen),
+        lastSeen: now, missingSince: null }
+    : { choice, identity, since: now, lastSeen: now, missingSince: null };
   const progress = Math.min(1, Math.max(0, now - next.since) / holdMs);
   return { candidate: next, progress, selected: progress >= 1 ? choice : null };
 }

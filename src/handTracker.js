@@ -102,6 +102,7 @@ export class HandTracker {
       this.onStatus({
         type: "tracking",
         count: visibleHands.length,
+        captureMs: message.captureMs,
         inferenceMs: message.inferenceMs,
         faceInferenceMs: message.faceInferenceMs,
         faceCount: this.faceSlots.filter((slot) => slot?.visible).length,
@@ -214,6 +215,7 @@ export class HandTracker {
     this.lastVideoTime = this.video.currentTime;
     this.lastCaptureTime = timestampMs;
     const generation = this.generation;
+    const captureStartedAt = performance.now();
     try {
       const bitmap = await createImageBitmap(this.video, {
         resizeWidth: TRACKING_WIDTH,
@@ -240,7 +242,8 @@ export class HandTracker {
         return;
       }
       this.worker.postMessage(
-        { type: "DETECT", bitmap, faceBitmap, timestampMs, generation },
+        { type: "DETECT", bitmap, faceBitmap, timestampMs, generation,
+          captureMs: performance.now() - captureStartedAt },
         faceBitmap ? [bitmap, faceBitmap] : [bitmap],
       );
     } catch (error) {

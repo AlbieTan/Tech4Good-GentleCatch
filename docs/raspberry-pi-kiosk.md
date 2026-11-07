@@ -27,6 +27,8 @@ test -f "$HOME/gentle-catch/dist/wasm/vision_wasm_module_internal.wasm"
 
 Do not open `dist/index.html` as a `file://` URL; use the localhost address below so the web worker and assets load reliably. Keep the checkout at `~/gentle-catch` unless you also update the service path.
 
+For an existing kiosk, extract the prebuilt ZIP to a temporary directory, then swap in its `dist/` directory. Keep the previous `dist/` as a backup, restart the web service, and reload Chromium. The existing launcher, autostart entry and camera policy still apply.
+
 ## 2. Start the local server
 
 Install the included user service and start it:
@@ -89,7 +91,7 @@ Reboot once with staff present. The game should open without a mouse. If Chromiu
 1. Cold reboot. The eight-second notice and camera menu should appear without staff interaction. Verify camera permission persists.
 2. Use only hand gestures to choose Solo, difficulty and duration; complete registration, countdown, round, results and return to menu.
 3. Repeat with two players side by side. Keep each person and their own hand on their respective camera side; no bystanders in the frame. Test a complete 60-second PvP round.
-4. Watch the on-screen tracker FPS and delay for the entire round, not just startup. Pi 5 performance has **not** been validated for this release. Even lighting, a USB webcam capable of stable 640×360 video, adequate power and active cooling help; they do not guarantee 30 FPS.
+4. Open `http://127.0.0.1:8000/?debug=1` for a test round. Note the palm tracking FPS, capture time, inference time and frame age during play. Frame age covers processing after the browser's video callback, so the visible motion delay can be higher. Pi 5 performance has **not** been measured for this build.
 5. Test a player leaving frame, webcam unplug/replug, and a reboot after a power interruption. Keep a staff-accessible way to exit kiosk mode or stop the Pi.
 
 If a test fails, use `http://127.0.0.1:8000/?mode=manual` to inspect the classic menu, check `journalctl --user -u gentlecatch-web.service`, and confirm `curl -I http://127.0.0.1:8000/models/hand_landmarker.task` returns 200. Browser developer tools can reveal a missing model/WASM file or worker error.

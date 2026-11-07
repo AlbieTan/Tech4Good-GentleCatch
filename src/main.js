@@ -28,6 +28,7 @@ import {
   getCameraMenuChoice,
   getCameraSettingChoice,
   hasRaisedMenuWrist,
+  stabilizeCameraMenuChoice,
 } from "./cameraMenu.js";
 import { sameRegisteredPosePlayers } from "./poseOwnership.js";
 import {
@@ -405,22 +406,25 @@ const handleTrackedPlayers = (hands, faces) => {
       }
       return;
     }
-    const choice = state.cameraMenuStage === "mode"
+    let choice = state.cameraMenuStage === "mode"
       ? getCameraMenuChoice(hands, faces, now, state.trackerKind)
       : getCameraSettingChoice(hands, faces, activePlayerCount(), now, state.trackerKind, state.playerFaceSlots);
+    if (state.cameraMenuStage === "mode") choice = stabilizeCameraMenuChoice(state.cameraMenuCandidate, choice);
     const menuFaces = state.cameraMenuStage === "mode" && choice
       ? selectRegistrationFaces(faces, choice === "pvp" ? 2 : 1, now) : null;
     const menu = advanceCameraMenu(state.cameraMenuCandidate, choice, now,
       undefined, menuFaces?.map(({ slot }) => slot).join(",") ?? "");
     state.cameraMenuCandidate = menu.candidate;
-    elements.cameraMenuSolo.classList.toggle("is-active", state.cameraMenuStage === "mode" && choice === "solo");
-    elements.cameraMenuPvp.classList.toggle("is-active", state.cameraMenuStage === "mode" && choice === "pvp");
+    const displayChoice = choice || (menu.candidate?.missingSince != null ? menu.candidate.choice : null);
+    elements.cameraMenuSolo.classList.toggle("is-active", state.cameraMenuStage === "mode" && displayChoice === "solo");
+    elements.cameraMenuPvp.classList.toggle("is-active", state.cameraMenuStage === "mode" && displayChoice === "pvp");
     elements.cameraMenuPositions.forEach((element, index) =>
       element.classList.toggle("is-active", state.cameraMenuStage !== "mode"
-        && choice === ["left", "middle", "right"][index]));
+        && displayChoice === ["left", "middle", "right"][index]));
     elements.cameraMenuMeter.style.width = `${Math.round(menu.progress * 100)}%`;
     elements.cameraMenuStatus.textContent = !choice
-      ? state.cameraMenuStage === "mode" ? "Waiting for one or two players with raised hands…"
+      ? menu.candidate?.missingSince != null ? "Keep both hands visible to finish choosing…"
+        : state.cameraMenuStage === "mode" ? "Waiting for one or two players with raised hands…"
         : "Show one hand beside a face."
       : state.cameraMenuStage === "mode"
         ? choice === "pvp" ? "Two nearest players found — keep both hands raised…" : "Nearest player found — keep your hand raised…"
@@ -556,7 +560,7 @@ const handleTrackerStatus = (status) => {
     state.lastDiagnosticsAt = now;
     const message = state.trackerKind === "hybrid"
       ? `Bodies ${status.bodyCount ?? 0} · Wrists ${status.count ?? 0} · ${status.cameraWidth ?? 0}×${status.cameraHeight ?? 0} · Video ${status.cameraFps ?? 0} FPS / Pose ${status.fps ?? 0} FPS / ${Math.round(status.inferenceMs ?? 0)} ms / frame age ${Math.round(status.frameAgeMs ?? 0)} ms · ${state.recoveryActive || state.phase === "registering" ? `Face points ${status.faceCount ?? 0}` : "Face check off"} · IDs ${status.personIds?.join(", ") || "—"}`
-      : `Faces ${status.faceCount ?? 0} · Palms ${status.count ?? 0} · ${status.fps ?? 0} FPS / ${Math.round(status.inferenceMs ?? 0)} ms / frame age ${Math.round(status.frameAgeMs ?? 0)} ms · ${status.backend ?? "Local"}`;
+      : `Faces ${status.faceCount ?? 0} · Palms ${status.count ?? 0} · ${status.fps ?? 0} FPS / capture ${Math.round(status.captureMs ?? 0)} ms / inference ${Math.round(status.inferenceMs ?? 0)} ms (face ${Math.round(status.faceInferenceMs ?? 0)} ms) / frame age ${Math.round(status.frameAgeMs ?? 0)} ms · ${status.backend ?? "Local"}`;
     elements.registrationDiagnostics.textContent = message;
     elements.trackingDiagnostics.textContent = message;
   }
@@ -1073,7 +1077,8 @@ async function startSession(inputMode) {
   elements.cameraSpaceNotice.textContent = state.playMode === "pvp"
     ? "Two players only · Everyone else, please stay outside the camera view"
     : "Player only · Everyone else, please stay outside the camera view";
-  elements.trackingDiagnostics.hidden = inputMode !== "camera" || state.trackerKind !== "hybrid";
+  elements.trackingDiagnostics.hidden = inputMode !== "camera"
+    || (state.trackerKind !== "hybrid" && pageParams.get("debug") !== "1");
   elements.board.classList.toggle("keyboard-mode", inputMode === "keyboard");
   elements.board.classList.toggle("pvp-mode", state.playMode === "pvp");
   elements.play.classList.toggle("pvp-mode", state.playMode === "pvp");

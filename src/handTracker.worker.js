@@ -139,6 +139,7 @@ self.addEventListener("message", async (event) => {
           confidence: handedness?.score ?? 1,
         };
       }).filter((hand) => Number.isFinite(hand.x) && Number.isFinite(hand.y));
+      const inferenceMs = performance.now() - startedAt;
       let faces;
       let faceInferenceMs = 0;
       if (faceTrackingEnabled && faceDetector && message.faceBitmap
@@ -155,7 +156,8 @@ self.addEventListener("message", async (event) => {
         faces,
         generation: message.generation,
         timestampMs: message.timestampMs,
-        inferenceMs: performance.now() - startedAt,
+        captureMs: message.captureMs,
+        inferenceMs,
         faceInferenceMs,
         backend,
       });

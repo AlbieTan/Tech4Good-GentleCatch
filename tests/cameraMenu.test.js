@@ -5,6 +5,7 @@ import {
   getCameraMenuChoice,
   getCameraSettingChoice,
   hasRaisedMenuWrist,
+  stabilizeCameraMenuChoice,
 } from "../src/cameraMenu.js";
 
 const face = (x, id, now) => ({ x, y: 0.27, cameraX: x, width: 0.16, height: 0.22,
@@ -36,6 +37,23 @@ describe("camera-only menu", () => {
     expect(advanceCameraMenu(first.candidate, "pvp", 1400).selected).toBeNull();
     expect(advanceCameraMenu(first.candidate, "solo", 1300).selected).toBe("solo");
     expect(advanceCameraMenu(first.candidate, "solo", 1300, 1200, "new-face").selected).toBeNull();
+  });
+
+  it("pauses a two-player hold across a brief missed hand without selecting Solo", () => {
+    const started = advanceCameraMenu(null, "pvp", 100, 1200, "left,right");
+    const seen = advanceCameraMenu(started.candidate, "pvp", 350, 1200, "left,right");
+    const holding = advanceCameraMenu(seen.candidate, "pvp", 600, 1200, "left,right");
+    expect(stabilizeCameraMenuChoice(holding.candidate, "solo")).toBeNull();
+    const missing = advanceCameraMenu(holding.candidate, null, 700, 1200);
+    expect(missing.candidate?.choice).toBe("pvp");
+    expect(missing.selected).toBeNull();
+    const returned = advanceCameraMenu(missing.candidate, "pvp", 850, 1200, "left,right");
+    expect(returned.progress).toBeCloseTo(missing.progress);
+    expect(returned.selected).toBeNull();
+    const continued = advanceCameraMenu(returned.candidate, "pvp", 1200, 1200, "left,right");
+    expect(advanceCameraMenu(continued.candidate, "pvp", 1550, 1200, "left,right").selected).toBe("pvp");
+    expect(advanceCameraMenu(holding.candidate, null, 1100, 1200).candidate).toBeNull();
+    expect(advanceCameraMenu(missing.candidate, "pvp", 1100, 1200, "left,right").progress).toBe(0);
   });
 
   it("uses one player's wrist position to choose a setting", () => {
