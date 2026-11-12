@@ -1,5 +1,15 @@
 # GentleCatch
 
+**Project status — completed and handed over, 12 November 2026.** The current team's Tech4Good project has ended. This repository preserves the developed prototype and documentation for the next team to continue from. Completion of the project does not establish that the remaining tracking and Raspberry Pi performance limitations have been resolved.
+
+**Next team:** start with the [developer getting-started and handover guide](docs/getting-started-next-team.md).
+
+| Resource | Link |
+| --- | --- |
+| Original foundation by Hakrrrm | [Hakrrrm/tech4good](https://github.com/Hakrrrm/tech4good) |
+| Developed GentleCatch version by AlbieTan | [AlbieTan/Tech4Good-GentleCatch](https://github.com/AlbieTan/Tech4Good-GentleCatch) |
+| Browser testing site | [GentleCatch on Vercel](https://tech4good-gentlecatch.vercel.app/) |
+
 GentleCatch is a browser-based movement game designed for Precious Active Ageing Centre. Players move their hands to catch falling garden shapes and avoid hazards. It supports a camera-only kiosk flow for older adults, a staff-operated classic setup screen, solo play, and a local two-player split-screen score battle.
 
 **[Play the deployed game](https://tech4good-gentlecatch.vercel.app/)** · **[Raspberry Pi kiosk guide](docs/raspberry-pi-kiosk.md)**
@@ -31,7 +41,7 @@ The camera-only kiosk uses the palm tracker for **both** solo and two-player pla
 5. During play, the palm position drives a circular cursor. In Together mode, Player 1 stays left and Player 2 stays right. Each side receives the same object type and starting position within its lane, with separate scores and streaks.
 6. Results stay visible for **eight seconds**, then the kiosk returns to the camera menu. Players must lower their hands before making the next choice. A healthy camera stream and tracker are reused instead of being reloaded.
 
-The menu needs a valid face–hand pairing and an uninterrupted hold of about **1.2 seconds**. Difficulty and round time use the **same** tracker and thresholds. A missed frame can currently reset a choice's progress; this is a known usability limitation, especially on slower hardware.
+The menu needs a valid face–hand pairing and a hold of about **1.2 seconds**. A pending two-player choice pauses through a brief missed detection of up to **450 ms**, then resumes when the same face slots return. A longer gap resets the choice. Difficulty and round time use the **same** tracker and thresholds and reset on detection loss.
 
 ## Game rules
 
@@ -111,7 +121,7 @@ Do not use a browser flag that silently grants camera access to every site. Keep
 
 ## Known limitations and troubleshooting
 
-- **Selection bar not filling:** lower all hands briefly after the previous choice, then show only one hand beside a visible face. Keep the hand in one zone. A detection dropout currently resets the 1.2-second hold.
+- **Selection bar not filling:** lower all hands briefly after the previous choice, then show only one hand beside a visible face. Keep the hand in one zone. Two-player mode selection tolerates a brief dropout, while difficulty and time choices reset on detection loss.
 - **Tracking lags:** improve light, avoid backlighting, close other tabs and camera apps, and check the on-screen tracker FPS/inference time. The Pi 5 is the recommended starting point for PvP; Pi 4 PvP is unverified.
 - **Two players swap or cannot register:** stand farther apart, keep hands on your own sides, avoid crossing the middle, and keep bystanders out of view. The app uses position, not biometric identity.
 - **No camera:** confirm the browser has permission for the exact localhost origin, the webcam is connected and unused by another app, and Chromium is running on the Pi desktop. If a Pi 5 with a USB webcam stays at “Waiting for the camera”, try the direct V4L2 launch in the [Pi guide](docs/raspberry-pi-kiosk.md); a successful command-line webcam test alone does not prove Chromium can enumerate it.
